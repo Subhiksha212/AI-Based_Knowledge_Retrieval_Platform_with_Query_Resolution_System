@@ -67,6 +67,7 @@ async def upload_file(
             file,
             file_data,
             extension,
+            user_id=str(current_user.id),
         )
 
         # Process the document in the background.

@@ -293,7 +293,14 @@ export default function CitationDisplay({
                         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                         <polyline points="14 2 14 8 20 8" />
                       </svg>
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{src.source || src.metadata?.filename || chunk?.metadata?.filename || 'Retrieved document'}</span>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {(() => {
+                          const fname = src.source || src.metadata?.filename || chunk?.metadata?.filename || 'Retrieved document';
+                          const cIdx = src.chunk_index ?? src.metadata?.chunk_index ?? chunk?.metadata?.chunk_index ?? (src.chunk_id && String(src.chunk_id).includes('_') ? String(src.chunk_id).split('_').pop() : null);
+                          const cLabel = (cIdx !== null && cIdx !== undefined && !isNaN(cIdx)) ? ` (Chunk ${Number(cIdx) + 1})` : '';
+                          return `${fname}${cLabel}`;
+                        })()}
+                      </span>
                     </span>
                     <span
                       style={{

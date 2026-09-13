@@ -231,6 +231,51 @@ export async function logoutUser(token = null) {
 }
 
 
+/*
+ * Refresh an existing/expired JWT access token.
+ */
+export async function refreshAuthToken() {
+  const token = getAuthToken();
+
+  if (!token) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/auth/refresh`,
+      {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+      },
+    );
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = await response.json();
+
+    if (data?.token) {
+      if (localStorage.getItem('qn_auth_token')) {
+        localStorage.setItem('qn_auth_token', data.token);
+      }
+      if (sessionStorage.getItem('qn_auth_token')) {
+        sessionStorage.setItem('qn_auth_token', data.token);
+      }
+      return data;
+    }
+  } catch (err) {
+    console.warn('Token refresh failed:', err);
+  }
+
+  return null;
+}
+
+
 /* ------------------------------------------------------------------ */
 /* Document APIs                                                       */
 /* ------------------------------------------------------------------ */
@@ -720,7 +765,7 @@ export async function sendChatMessage(
       originalQuery;
   }
 
-  const response = await fetch(
+  let response = await fetch(
     `${API_BASE_URL}/query`,
     {
       method: 'POST',
@@ -728,6 +773,20 @@ export async function sendChatMessage(
       body: JSON.stringify(requestBody),
     },
   );
+
+  if (response.status === 401) {
+    const refreshed = await refreshAuthToken();
+    if (refreshed?.token) {
+      response = await fetch(
+        `${API_BASE_URL}/query`,
+        {
+          method: 'POST',
+          headers: getAuthHeaders(true),
+          body: JSON.stringify(requestBody),
+        },
+      );
+    }
+  }
 
   const data = await parseResponse(response);
 
@@ -739,20 +798,5 @@ export async function sendChatMessage(
     );
   }
 
-  return data;
-}
-
-export async function analyzeImage(imageFile, question) {
-  const formData = new FormData();
-  formData.append('image', imageFile);
-  formData.append('question', question);
-
-  const response = await fetch(`${API_BASE_URL}/vlm/analyze`, {
-    method: 'POST',
-    // Do NOT set Content-Type header for FormData; fetch will set it automatically with the correct boundary
-    body: formData,
-  });
-
-  const data = await parseResponse(response);
   return data;
 }

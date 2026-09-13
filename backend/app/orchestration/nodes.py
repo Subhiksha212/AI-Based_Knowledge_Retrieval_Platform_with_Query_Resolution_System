@@ -674,7 +674,7 @@ def retrieval_node(
         # were below the relevance threshold), try to find chunks whose
         # stored filename appears in the raw query.  This handles queries
         # like "can u tell about flood.jpg" where the semantic distance
-        # between the query text and the VLM-generated image description
+        # between the query text and the OCR-extracted image text
         # is too large to pass the threshold.
         # ----------------------------------------------------------------
 

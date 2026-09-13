@@ -58,7 +58,28 @@ def validate_upload_data(file_data):
 
 
 # Save the uploaded file and create its processing job.
-def create_upload_job(file, file_data, extension):
+def create_upload_job(file, file_data, extension, user_id=None):
+    import hashlib
+    file_hash = hashlib.sha256(file_data).hexdigest()
+
+    # Deduplicate: Clean up any previous indexing of the exact same file content by this user
+    existing_dup_id = None
+    for d_id, d_meta in list(documents.items()):
+        if d_meta.get("file_hash") == file_hash and (not user_id or d_meta.get("user_id") == user_id):
+            existing_dup_id = d_id
+            break
+
+    if existing_dup_id:
+        from app.rag.chromadb_service import delete_documents_for_user, delete_documents
+        try:
+            if user_id:
+                delete_documents_for_user(existing_dup_id, user_id)
+            else:
+                delete_documents(existing_dup_id)
+        except Exception:
+            pass
+        documents.pop(existing_dup_id, None)
+
     document_id = uuid.uuid4().hex
     job_id = uuid.uuid4().hex
 
@@ -89,6 +110,8 @@ def create_upload_job(file, file_data, extension):
         "jobId": job_id,
         "name": file.filename,
         "size": len(file_data),
+        "file_hash": file_hash,
+        "user_id": user_id or "",
         "status": "processing",
         "stage": "uploaded",
         "progress": 10,
@@ -149,9 +172,16 @@ def process_uploaded_document(
             message="Extracting text from document...",
         )
 
-        # Extract text from the uploaded document.
+        def page_progress(page_num, total_pages):
+            progress_pct = 20 + int((page_num / max(total_pages, 1)) * 15)
+            msg = f"Processing page {page_num}/{total_pages}..."
+            update_job(job_id, stage="extracting", progress=progress_pct, message=msg)
+            update_document_status(document_id, stage="extracting", progress=progress_pct, message=msg)
+
+        # Extract text from the uploaded document using PyMuPDF + PP-OCRv5 Mobile.
         extraction_result = extract_document(
-            str(file_path)
+            str(file_path),
+            page_progress_callback=page_progress
         )
 
         if not extraction_result or not isinstance(extraction_result, dict):
@@ -159,18 +189,17 @@ def process_uploaded_document(
                 "No text could be extracted from the file"
             )
             
-        extracted_text = extraction_result["text"]
+        extracted_text = (extraction_result.get("text") or "").strip()
         extracted_images = extraction_result.get("images", [])
 
         if not extracted_text and not extracted_images:
             raise ValueError(
-                "No content could be extracted from the file"
+                "No readable text or content could be extracted from the file."
             )
             
         # Prepend the original filename to the text to ensure semantic matching works
         # when users search for specific files by name (especially important for images)
-        if extracted_text:
-            extracted_text = f"File Name: {original_filename}\n\n{extracted_text}"
+        full_text_with_header = f"File Name: {original_filename}\n\n{extracted_text}" if extracted_text else ""
 
         # Update status before chunk creation.
         update_job(
@@ -189,9 +218,9 @@ def process_uploaded_document(
 
         # Split extracted text into chunks.
         chunks = []
-        if extracted_text:
+        if full_text_with_header:
             from app.rag.chunking import chunk_text
-            chunks = chunk_text(extracted_text)
+            chunks = chunk_text(full_text_with_header)
 
         metadatas = [
             {
