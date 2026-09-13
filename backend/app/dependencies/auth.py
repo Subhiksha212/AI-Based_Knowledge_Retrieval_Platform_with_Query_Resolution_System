@@ -4,7 +4,7 @@ FastAPI authentication dependencies.
 Responsibilities:
 - Read Bearer tokens
 - Validate JWTs
-- Load the current user from MySQL
+- Load the current user from PostgreSQL
 - Reject unauthenticated requests
 """
 
