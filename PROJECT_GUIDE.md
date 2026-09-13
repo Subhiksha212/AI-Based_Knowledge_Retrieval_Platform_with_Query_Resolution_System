@@ -211,12 +211,14 @@ The frontend remains a React SPA built with Vite. The backend is a FastAPI appli
 |---|---|
 | all-MiniLM-L6-v2 | Lightweight SentenceTransformer embedding model |
 
-### Document Processing Libraries
+### Document Processing & OCR Libraries
 | Technology | Description |
 |---|---|
-| pypdf | PDF extraction |
-| python-docx | DOCX extraction |
-| pandas | CSV parsing |
+| PyMuPDF (`fitz`) | High-performance PDF page rendering, page-to-image rasterization, and direct text extraction |
+| PP-OCRv5 Mobile | Fast, lightweight CPU OCR engine (`paddleocr`, `paddlepaddle`) for extracting structured text from image notes and scanned PDF pages |
+| pypdf | Secondary PDF text parsing fallback |
+| python-docx | DOCX text extraction |
+| pandas | CSV data extraction |
 | langchain-text-splitters | Recursive text chunking |
 
 ### Development Tools

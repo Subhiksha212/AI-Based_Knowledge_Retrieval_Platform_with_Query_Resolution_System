@@ -6,7 +6,10 @@ An AI-powered Retrieval-Augmented Generation (RAG) platform that enables users t
 
 ## Features
 
-- 📄 Upload PDF, DOCX, TXT, and CSV documents
+- 📄 Upload PDF, DOCX, TXT, CSV, PNG, JPG, and JPEG documents
+- 🔍 Lightweight **PP-OCRv5 Mobile** CPU OCR engine and **PyMuPDF (`fitz`)** page rendering for scanned PDFs and image notes
+- 🛡️ **SHA-256 Content-Hash Deduplication** preventing duplicate vector pollution on re-upload
+- 🏷️ **UI Chunk Designation Badges** (`(Chunk 1)`, `(Chunk 2)`) in citation badges, evidence inspector, and source lists
 - 🔍 Semantic document retrieval using ChromaDB and Sentence Transformers
 - 🧠 Query Understanding Agent for normalization, entity/keyword extraction and query classification
 - 🔎 Hybrid retrieval with semantic search and optional exact-term matching
@@ -23,7 +26,7 @@ An AI-powered Retrieval-Augmented Generation (RAG) platform that enables users t
 - 💻 React-based conversational interface
 - 🗂️ Document management (view and delete indexed documents)
 - 📈 Background document processing with upload status tracking
-- 🔐 User authentication with sign up, sign in, JWT sessions and logout
+- 🔐 User authentication with sign up, sign in, JWT sessions, **JWT token refresh (`POST /auth/refresh`)**, and logout
 - 👤 Per-user conversation ownership and isolation
 - 🌐 General-knowledge and conversational queries answered directly by the LLM
 - 🧩 User-facing upload UI hides internal chunk/embedding/vector counts while processing continues normally
@@ -65,8 +68,10 @@ An AI-powered Retrieval-Augmented Generation (RAG) platform that enables users t
 - ChromaDB
 - Retrieval-Augmented Generation (RAG)
 
-### Document Processing
+### Document & OCR Processing
 
+- **PyMuPDF (`fitz`)** (PDF rendering & text extraction)
+- **PP-OCRv5 Mobile** (`paddleocr`, `paddlepaddle`) (Fast, lightweight CPU OCR for image notes & scanned PDFs)
 - pypdf
 - python-docx
 - pandas
