@@ -37,67 +37,36 @@ def select_file():
     return file_path
 
 
-def extract_pdf(file_path):
-    from app.services.vlm_service import vlm_service
-    from app.utils.image_filter import is_valid_document_image
-    
-    reader = PdfReader(file_path)
-    text = ""
-    images_metadata = []
-    image_count = 0
-    MAX_IMAGES = 20 # Limit images to avoid extreme slowdowns
-    page_hashes_map = {}
+def extract_pdf(file_path, page_progress_callback=None):
+    from app.services.ocr_service import ocr_service
 
-    for page_number, page in enumerate(reader.pages, start=1):
-        page_text = page.extract_text()
-        if page_text:
-            text += f"\n--- Page {page_number} ---\n"
-            text += page_text
-            
-        # Process images on the page
-        for img_idx, image_file_object in enumerate(page.images):
-            if image_count >= MAX_IMAGES:
-                break
-                
-            try:
-                # Filter out tiny/repeated watermark/logo images
-                valid, reason = is_valid_document_image(
-                    image_file_object.data,
-                    page_number=page_number,
-                    page_hashes_map=page_hashes_map,
-                )
-                if not valid:
-                    continue
+    ocr_result = ocr_service.process_pdf(
+        file_path,
+        dpi=150,
+        page_progress_callback=page_progress_callback
+    )
 
-                # Use vlm_service to analyze the image
-                vlm_answer = vlm_service.analyze_image(
-                    image_file_object.data, 
-                    "Describe this image in detail. Make sure to read and transcribe any prominent text (e.g., names, titles, dates, or data points).",
-                    max_tokens=200,
-                    page_number=page_number,
-                    image_index=img_idx,
-                )
-                if vlm_answer:
-                    # Create a separate metadata record for the image
-                    images_metadata.append({
-                        "content": f"[Visual Content: {vlm_answer}]",
-                        "metadata": {
-                            "page_number": page_number,
-                            "image_index": img_idx,
-                            "source_type": "pdf_image"
-                        }
-                    })
-                image_count += 1
-            except Exception as e:
-                # Ignore extraction errors for individual images
-                print(f"Failed to process image on page {page_number}: {e}")
-                pass
+    text = ocr_result.get("text", "")
+    pages = ocr_result.get("pages", [])
+
+    images_metadata = [
+        {
+            "content": f"[Page {p['page_number']} OCR Content (Confidence: {p['confidence']:.2f})]\n{p['text']}",
+            "metadata": {
+                "page_number": p["page_number"],
+                "confidence": p["confidence"],
+                "source_type": "pdf_ocr_page",
+                "extraction_method": "ppocrv5",
+            }
+        }
+        for p in pages
+    ]
 
     return {"text": text, "images": images_metadata}
 
 
 def extract_docx(file_path):
-    from app.services.vlm_service import vlm_service
+    from app.services.ocr_service import ocr_service
     from app.utils.image_filter import is_valid_document_image
 
     document = Document(file_path)
@@ -129,17 +98,12 @@ def extract_docx(file_path):
                 if not valid:
                     continue
 
-                # Use vlm_service to analyze the image
-                vlm_answer = vlm_service.analyze_image(
-                    image_data, 
-                    "Describe this image in detail. Make sure to read and transcribe any prominent text (e.g., names, titles, dates, or data points).",
-                    max_tokens=200,
-                    image_index=image_count,
-                )
-                if vlm_answer:
-                    # Create a separate metadata record for the image
+                # Run PP-OCRv5 Mobile on embedded DOCX image
+                ocr_result = ocr_service.run_ocr_on_image(image_data)
+                ocr_text = ocr_result.get("text", "").strip()
+                if ocr_text:
                     images_metadata.append({
-                        "content": f"[Visual Content: {vlm_answer}]",
+                        "content": f"[Image OCR Text: {ocr_text}]",
                         "metadata": {
                             "image_index": image_count,
                             "source_type": "docx_image"
@@ -277,10 +241,8 @@ def clean_text(text):
     return "\n".join(cleaned_lines)
 
 
-def extract_document(file_path):
-
+def extract_document(file_path, page_progress_callback=None):
     if not os.path.isfile(file_path):
-
         raise FileNotFoundError(
             "File not found."
         )
@@ -303,7 +265,7 @@ def extract_document(file_path):
 
     if extension == ".pdf":
 
-        result = extract_pdf(file_path)
+        result = extract_pdf(file_path, page_progress_callback=page_progress_callback)
         text = result["text"]
         images = result["images"]
 
@@ -318,20 +280,25 @@ def extract_document(file_path):
         text = extract_txt(file_path)
 
     elif extension in [".jpg", ".jpeg", ".png"]:
-        
-        from app.services.vlm_service import vlm_service
+        from app.services.ocr_service import ocr_service
+        import logging
+        logger = logging.getLogger(__name__)
+
         with open(file_path, "rb") as f:
             image_data = f.read()
             
         try:
-            vlm_answer = vlm_service.analyze_image(
-                image_data, 
-                "Describe this image in detail. Make sure to read and transcribe any prominent text (e.g., names, titles, dates, or data points).",
-                max_tokens=200
-            )
-            text = f"[Image Description: {vlm_answer}]"
+            ocr_result = ocr_service.run_ocr_on_image(image_data)
+            ocr_text = ocr_result.get("text", "").strip()
+            confidence = ocr_result.get("confidence", 0.0)
+            if ocr_text:
+                text = f"[OCR Extracted Text (Confidence: {confidence:.2f})]\n{ocr_text}"
+                logger.info(f"[OCR] Extracted {len(ocr_text)} chars from '{os.path.basename(file_path)}' (conf: {confidence:.2f}):\n{ocr_text[:300]}")
+            else:
+                text = ""
+                logger.warning(f"[OCR] No readable text detected in image '{os.path.basename(file_path)}'.")
         except Exception as e:
-            raise ValueError(f"Failed to process image: {e}")
+            raise ValueError(f"Failed to process image with OCR: {e}")
 
     elif extension == ".csv":
 

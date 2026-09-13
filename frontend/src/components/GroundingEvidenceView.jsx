@@ -156,7 +156,16 @@ export default function GroundingEvidenceView({
                     >
                       <span style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flex: 1 }}>
                         <span style={{ width: '22px', height: '22px', borderRadius: '6px', background: 'hsla(174,100%,41%,0.12)', border: '1px solid hsla(174,100%,41%,0.2)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent-purple)', fontWeight: 700, fontSize: '0.65rem', fontFamily: 'var(--font-mono)', flexShrink: 0 }}>{idx + 1}</span>
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-primary)', fontWeight: 500 }}>{src.metadata?.filename || 'Retrieved document'}</span>
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-primary)', fontWeight: 500 }}>
+                          {(() => {
+                            const fname = src.metadata?.filename || 'Retrieved document';
+                            const cIdx = src.metadata?.chunk_index !== undefined 
+                              ? src.metadata.chunk_index 
+                              : (src.chunk_id && String(src.chunk_id).includes('_') ? String(src.chunk_id).split('_').pop() : null);
+                            const cLabel = (cIdx !== null && cIdx !== undefined && !isNaN(cIdx)) ? ` (Chunk ${Number(cIdx) + 1})` : '';
+                            return `${fname}${cLabel}`;
+                          })()}
+                        </span>
                         <span style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: '0.65rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>[{src.chunk_id || 'chunk'}]</span>
                       </span>
                       <span style={{ fontWeight: 700, color: pct >= 70 ? 'var(--accent-emerald)' : pct >= 40 ? 'var(--accent-blue)' : 'var(--accent-rose)', flexShrink: 0, marginLeft: '8px' }}>{pct}%</span>
@@ -456,7 +465,16 @@ export default function GroundingEvidenceView({
                   >
                     <span style={{ display: 'flex', alignItems: 'center', gap: '7px', minWidth: 0, flex: 1 }}>
                       <span style={{ width: '20px', height: '20px', borderRadius: '6px', background: cited ? 'hsla(145,80%,42%,0.14)' : 'hsla(185,18%,14%,0.5)', border: `1px solid ${cited ? 'hsla(145,80%,42%,0.22)' : 'var(--border-color)'}`, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: cited ? 'var(--accent-emerald)' : 'var(--text-muted)', fontWeight: 700, fontSize: '0.6rem', fontFamily: 'var(--font-mono)', flexShrink: 0 }}>{ref ? ref.replace(/\[|\]/g, '') : idx + 1}</span>
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-primary)', fontWeight: isActive ? 600 : 400, maxWidth: '170px' }}>{src.metadata?.filename || 'Retrieved document'}</span>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-primary)', fontWeight: isActive ? 600 : 400, maxWidth: '170px' }}>
+                        {(() => {
+                          const fname = src.metadata?.filename || 'Retrieved document';
+                          const cIdx = src.metadata?.chunk_index !== undefined 
+                            ? src.metadata.chunk_index 
+                            : (src.chunk_id && String(src.chunk_id).includes('_') ? String(src.chunk_id).split('_').pop() : null);
+                          const cLabel = (cIdx !== null && cIdx !== undefined && !isNaN(cIdx)) ? ` (Chunk ${Number(cIdx) + 1})` : '';
+                          return `${fname}${cLabel}`;
+                        })()}
+                      </span>
                     </span>
                     <span style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
                       {cited && <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--accent-emerald)', display: 'inline-block', boxShadow: '0 0 6px hsla(145,80%,42%,0.5)' }} />}

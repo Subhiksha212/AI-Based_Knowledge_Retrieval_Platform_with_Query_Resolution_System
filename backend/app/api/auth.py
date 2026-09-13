@@ -16,12 +16,15 @@ from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
+    Header,
     status,
 )
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from app.core.auth import (
     create_access_token,
+    decode_token_for_refresh,
     hash_password,
     verify_password,
 )
@@ -34,6 +37,8 @@ from app.models.auth_models import (
     UserProfileResponse,
     UserRegisterRequest,
 )
+
+bearer_scheme_optional = HTTPBearer(auto_error=False)
 
 
 # Authentication routes are grouped under /auth.
@@ -242,3 +247,54 @@ def logout(
             current_user.id
         ),
     }
+
+
+@router.post(
+    "/refresh",
+    response_model=AuthTokenResponse,
+)
+def refresh_token(
+    credentials: HTTPAuthorizationCredentials | None = Depends(
+        bearer_scheme_optional
+    ),
+    db: Session = Depends(get_db),
+) -> AuthTokenResponse:
+    """
+    Issue a new access token if the provided token signature is valid.
+    Allows refreshing active or recently expired access tokens.
+    """
+    if credentials is None or not credentials.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication token required for refresh.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    user_id = decode_token_for_refresh(credentials.credentials)
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or unrecognized token signature.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User no longer exists.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    new_token = create_access_token(
+        subject=str(user.id),
+        extra_claims={"email": user.email},
+    )
+
+    return AuthTokenResponse(
+        success=True,
+        token=new_token,
+        token_type="bearer",
+        user=_user_to_profile(user),
+        message="Token refreshed successfully.",
+    )

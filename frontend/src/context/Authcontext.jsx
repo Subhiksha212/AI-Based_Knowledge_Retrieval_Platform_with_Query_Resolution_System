@@ -309,6 +309,22 @@ export const AuthProvider = ({
   };
 
 
+  /*
+   * Refresh current token manually.
+   */
+  const refreshToken = async () => {
+    const refreshed = await api.refreshAuthToken();
+    if (refreshed?.token) {
+      setToken(refreshed.token);
+      if (refreshed.user) {
+        setUser(refreshed.user);
+      }
+      return refreshed;
+    }
+    return null;
+  };
+
+
   return (
     <AuthContext.Provider
       value={{
@@ -324,6 +340,7 @@ export const AuthProvider = ({
         register,
         quickLogin,
         logout,
+        refreshToken,
       }}
     >
       {children}
