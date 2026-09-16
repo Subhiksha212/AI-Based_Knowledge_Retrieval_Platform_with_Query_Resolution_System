@@ -231,51 +231,6 @@ export async function logoutUser(token = null) {
 }
 
 
-/*
- * Refresh an existing/expired JWT access token.
- */
-export async function refreshAuthToken() {
-  const token = getAuthToken();
-
-  if (!token) {
-    return null;
-  }
-
-  try {
-    const response = await fetch(
-      `${API_BASE_URL}/auth/refresh`,
-      {
-        method: 'POST',
-        headers: {
-          Accept: 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-      },
-    );
-
-    if (!response.ok) {
-      return null;
-    }
-
-    const data = await response.json();
-
-    if (data?.token) {
-      if (localStorage.getItem('qn_auth_token')) {
-        localStorage.setItem('qn_auth_token', data.token);
-      }
-      if (sessionStorage.getItem('qn_auth_token')) {
-        sessionStorage.setItem('qn_auth_token', data.token);
-      }
-      return data;
-    }
-  } catch (err) {
-    console.warn('Token refresh failed:', err);
-  }
-
-  return null;
-}
-
-
 /* ------------------------------------------------------------------ */
 /* Document APIs                                                       */
 /* ------------------------------------------------------------------ */
@@ -765,7 +720,9 @@ export async function sendChatMessage(
       originalQuery;
   }
 
-  let response = await fetch(
+  console.log("[CHAT] Request payload:", requestBody);
+
+  const response = await fetch(
     `${API_BASE_URL}/query`,
     {
       method: 'POST',
@@ -773,20 +730,6 @@ export async function sendChatMessage(
       body: JSON.stringify(requestBody),
     },
   );
-
-  if (response.status === 401) {
-    const refreshed = await refreshAuthToken();
-    if (refreshed?.token) {
-      response = await fetch(
-        `${API_BASE_URL}/query`,
-        {
-          method: 'POST',
-          headers: getAuthHeaders(true),
-          body: JSON.stringify(requestBody),
-        },
-      );
-    }
-  }
 
   const data = await parseResponse(response);
 
@@ -799,4 +742,92 @@ export async function sendChatMessage(
   }
 
   return data;
+}
+
+/* ------------------------------------------------------------------ */
+/* Admin APIs                                                         */
+/* ------------------------------------------------------------------ */
+
+export async function getAdminOverview() {
+  const response = await fetch(
+    `${API_BASE_URL}/admin/overview`,
+    {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    },
+  );
+
+  return parseResponse(response);
+}
+
+export async function getAdminUsers() {
+  const response = await fetch(
+    `${API_BASE_URL}/admin/users`,
+    {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    },
+  );
+
+  return parseResponse(response);
+}
+
+export async function getAdminUser(userId) {
+  const response = await fetch(
+    `${API_BASE_URL}/admin/users/${encodeURIComponent(userId)}`,
+    {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    },
+  );
+
+  return parseResponse(response);
+}
+
+export async function getAdminDocuments() {
+  const response = await fetch(
+    `${API_BASE_URL}/admin/documents`,
+    {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    },
+  );
+
+  return parseResponse(response);
+}
+
+export async function deleteAdminDocument(documentId) {
+  const response = await fetch(
+    `${API_BASE_URL}/admin/documents/${encodeURIComponent(documentId)}`,
+    {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    },
+  );
+
+  return parseResponse(response);
+}
+
+export async function getQueriesPerUser() {
+  const response = await fetch(
+    `${API_BASE_URL}/admin/analytics/queries-per-user`,
+    {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    },
+  );
+
+  return parseResponse(response);
+}
+
+export async function getFrequentQueries(limit = 10) {
+  const response = await fetch(
+    `${API_BASE_URL}/admin/analytics/frequent-queries?limit=${encodeURIComponent(limit)}`,
+    {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    },
+  );
+
+  return parseResponse(response);
 }

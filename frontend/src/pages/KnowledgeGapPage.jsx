@@ -21,6 +21,30 @@ function reasonForGap(gap) {
   return 'Detected gap';
 }
 
+function filterCategoryForGap(gap) {
+  const reason = reasonForGap(gap).toLowerCase();
+
+  if (reason.includes('unanswered')) {
+    return 'Unanswered';
+  }
+
+  if (
+    reason.includes('no information retrieved') ||
+    reason.includes('no relevant chunk')
+  ) {
+    return 'No relevant chunks';
+  }
+
+  if (
+    reason.includes('low retrieval confidence') ||
+    reason.includes('low confidence')
+  ) {
+    return 'Low confidence';
+  }
+
+  return reasonForGap(gap);
+}
+
 export default function KnowledgeGapPage({ onIngest }) {
   const [data, setData] = useState(null);
   const [filter, setFilter] = useState('all');
@@ -50,7 +74,8 @@ export default function KnowledgeGapPage({ onIngest }) {
     const q = search.trim().toLowerCase();
     return gaps.filter((gap) => {
       const reason = reasonForGap(gap);
-      if (filter !== 'all' && reason.toLowerCase() !== filter.toLowerCase()) return false;
+      const category = filterCategoryForGap(gap);
+      if (filter !== 'all' && category.toLowerCase() !== filter.toLowerCase()) return false;
       if (q && !`${gap.query_text || ''} ${gap.query_type || ''} ${reason}`.toLowerCase().includes(q)) return false;
       return true;
     });
@@ -79,18 +104,19 @@ export default function KnowledgeGapPage({ onIngest }) {
   }
 
   const total = Number(statistics.total_gaps ?? gaps.length ?? 0);
-  const open = Number(statistics.open_gaps ?? statistics.open ?? total);
-  const resolved = Number(statistics.resolved_gaps ?? statistics.resolved ?? 0);
+  const detected = Number(statistics.total_gaps ?? gaps.length ?? 0);
+  const topRepeated = Number(
+    top[0]?.occurrence_count ??
+      (gaps.length > 0
+        ? Math.max(...gaps.map((g) => Number(g.occurrence_count || 1)))
+        : 0)
+  );
 
   return (
     <div className="m4-page">
       <div className="m4-header-row">
         <div>
-          <p style={{ fontSize: '0.65rem', fontWeight: 800, letterSpacing: '0.12em', color: 'var(--accent-emerald)', margin: '0 0 6px' }}>
-            MILESTONE 4 · KNOWLEDGE GAP DETECTION
-          </p>
           <h1 className="m4-title">Knowledge Gap Visualization</h1>
-          <p className="m4-subtitle">Real gaps detected by the backend from retrieval confidence and unanswered queries.</p>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button className="btn btn-secondary" onClick={load}>⟳ Rescan</button>
@@ -99,16 +125,27 @@ export default function KnowledgeGapPage({ onIngest }) {
         </div>
       </div>
 
-      <div className="m4-cards">
-        <div className="glass-card m4-card"><div className="m4-card-label">⚠ Total Gaps</div><div className="m4-card-value">{total}</div><div className="m4-card-sub">Backend detected</div></div>
-        <div className="glass-card m4-card"><div className="m4-card-label">🟠 Open Gaps</div><div className="m4-card-value">{open}</div><div className="m4-card-sub">Currently unresolved</div></div>
-        <div className="glass-card m4-card"><div className="m4-card-label">✅ Resolved</div><div className="m4-card-value">{resolved}</div><div className="m4-card-sub">Resolved records</div></div>
-        <div className="glass-card m4-card"><div className="m4-card-label">📈 Top Repeated Gap</div><div className="m4-card-value">{top[0]?.occurrence_count ?? 0}</div><div className="m4-card-sub">Occurrences</div></div>
+      <div className="m4-cards m4-cards-3">
+        <div className="glass-card m4-card">
+          <div className="m4-card-label">TOTAL GAPS</div>
+          <div className="m4-card-value">{total}</div>
+          <div className="m4-card-sub">Backend detected</div>
+        </div>
+        <div className="glass-card m4-card">
+          <div className="m4-card-label">DETECTED</div>
+          <div className="m4-card-value">{detected}</div>
+          <div className="m4-card-sub">Active gap queries</div>
+        </div>
+        <div className="glass-card m4-card">
+          <div className="m4-card-label">TOP REPEATED</div>
+          <div className="m4-card-value">{topRepeated}</div>
+          <div className="m4-card-sub">Occurrences</div>
+        </div>
       </div>
 
       <div className="glass-panel m4-panel">
         <div className="m4-panel-head">
-          <div><h3 className="m4-panel-title">Detected Knowledge Gaps</h3><p className="m4-panel-sub">Only records returned by the backend are displayed.</p></div>
+          <div><h3 className="m4-panel-title">Detected Knowledge Gaps</h3></div>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
           {FILTERS.map((item) => (

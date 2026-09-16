@@ -768,6 +768,7 @@ def retrieval_node(
                     keywords=[],
                     query_type="factual",
                     exact_candidates_found=False,
+                    search_query=raw_query,
                     relevance_threshold=None,
                 )
 
@@ -927,10 +928,16 @@ User query:
 
         return {
             **state,
+            # General LLM responses are intentionally outside the RAG
+            # confidence/retrieval pipeline. Explicitly clear retrieval
+            # state so Context Inspector cannot display stale chunks.
+            "retrieval_result": {
+                "results": [],
+            },
             "response": {
                 "answer": answer,
                 "sources": [],
-                "confidence": 0.0,
+                "confidence": None,
             },
         }
 
@@ -1009,7 +1016,7 @@ def save_memory_node(
             ),
             "confidence": response.get(
                 "confidence",
-                0.0,
+                None,
             ),
             "speech_text": state.get(
                 "speech_text"

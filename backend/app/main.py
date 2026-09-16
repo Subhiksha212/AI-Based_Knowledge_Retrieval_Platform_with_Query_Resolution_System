@@ -23,7 +23,7 @@ from app.api.knowledge_base import router as knowledge_base_router
 # -------------------------------------------------------------
 from app.analytics.router import router as analytics_router
 from app.knowledge_gaps.router import router as knowledge_gaps_router
-
+from app.admin.router import router as admin_router
 from app.core.config import CORS_ALLOW_ORIGINS
 
 
@@ -97,4 +97,8 @@ app.include_router(
 
 app.include_router(
     knowledge_gaps_router
+)
+
+app.include_router(
+    admin_router
 )

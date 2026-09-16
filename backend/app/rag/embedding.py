@@ -1,33 +1,41 @@
 """
 embedding.py
 
-Loads the embedding model and generates embeddings
-for text chunks using Sentence Transformers.
+Loads the shared embedding model and generates embeddings for text chunks
+using Sentence Transformers.
 """
+
+from __future__ import annotations
 
 from sentence_transformers import SentenceTransformer
 
+from app.core.embedding_model import get_embedding_model
+
+
 def load_embedding_model() -> SentenceTransformer:
     """
-    Load the embedding model.
-    Downloads the model only once and uses the local cache afterwards.
+    Return the shared embedding model.
+
+    The actual SentenceTransformer instance is cached in
+    app.core.embedding_model, so RAG, document indexing, semantic search,
+    and analytics can all reuse one model object in the same backend process.
     """
-    return SentenceTransformer("all-MiniLM-L6-v2")
+    return get_embedding_model()
 
 
 def embed_chunks(
     model: SentenceTransformer,
-    chunks: list[str]
+    chunks: list[str],
 ) -> list[list[float]]:
     """
     Generate embeddings for text chunks.
 
     Args:
-        model: Loaded embedding model
-        chunks: List of text chunks
+        model: Loaded embedding model.
+        chunks: List of text chunks.
 
     Returns:
-        List of embedding vectors
+        List of embedding vectors.
     """
 
     if not chunks:
@@ -36,27 +44,24 @@ def embed_chunks(
     embeddings = model.encode(
         chunks,
         convert_to_numpy=True,
-        normalize_embeddings=True
+        normalize_embeddings=True,
     )
 
     return embeddings.tolist()
 
 
 def get_embedding_dimension(model: SentenceTransformer) -> int:
-    """
-    Returns the embedding dimension.
-    """
+    """Return the embedding dimension."""
     return model.get_embedding_dimension()
 
 
 if __name__ == "__main__":
-
     model = load_embedding_model()
 
     sample_chunks = [
         "Artificial Intelligence is transforming industries.",
         "Machine Learning is a subset of AI.",
-        "RAG combines retrieval with generation."
+        "RAG combines retrieval with generation.",
     ]
 
     embeddings = embed_chunks(model, sample_chunks)

@@ -23,6 +23,7 @@ from app.agents.retrieval.exact_search import search_exact
 from app.agents.retrieval.reranker import (
     diversify_results,
     rerank_results,
+    semantic_score,
 )
 from app.agents.retrieval.semantic_search import search_semantic
 
@@ -646,6 +647,83 @@ class RetrievalAgent:
 
         return selected[:final_k]
 
+
+    @staticmethod
+    def _rescore_selected_results(
+        results: list[dict[str, Any]],
+        query_analysis: QueryUnderstandingResult,
+        *,
+        exact_candidates_found: bool,
+    ) -> list[dict[str, Any]]:
+        """
+        Ensure every final context chunk carries a meaningful
+        relevance score.
+
+        Completeness/section expansion may intentionally add an adjacent
+        chunk directly from the candidate pool. Such a chunk can be a
+        valid piece of context even though it was not in the ranked list,
+        and historically it appeared as 0% in Context Inspector simply
+        because no relevance_score field had been attached.
+        """
+
+        rescored: list[dict[str, Any]] = []
+
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+
+            item = dict(result)
+
+            existing_score = item.get("relevance_score")
+
+            try:
+                existing_numeric = float(existing_score)
+                has_valid_score = 0.0 <= existing_numeric <= 1.0
+            except (TypeError, ValueError):
+                has_valid_score = False
+
+            if not has_valid_score:
+                rescored_candidates = rerank_results(
+                    [item],
+                    exact_terms=list(query_analysis.exact_terms),
+                    keywords=list(query_analysis.keywords),
+                    query_type=query_analysis.query_type,
+                    exact_candidates_found=exact_candidates_found,
+                    search_query=query_analysis.search_query,
+                    relevance_threshold=0.0,
+                )
+
+                if rescored_candidates:
+                    item = dict(rescored_candidates[0])
+                else:
+                    # Final defensive fallback: use the candidate's own
+                    # semantic distance if available rather than showing 0%
+                    # merely because no reranker metadata was attached.
+                    distance = item.get("distance")
+                    if distance is not None:
+                        try:
+                            item["relevance_score"] = round(
+                                semantic_score(distance),
+                                6,
+                            )
+                        except Exception:
+                            item["relevance_score"] = 0.0
+                    else:
+                        item["relevance_score"] = 0.0
+
+                item["context_expanded"] = True
+
+            else:
+                item["relevance_score"] = round(
+                    existing_numeric,
+                    6,
+                )
+                item.setdefault("context_expanded", False)
+
+            rescored.append(item)
+
+        return rescored
+
     # Main retrieval method
 
     def retrieve(
@@ -755,6 +833,7 @@ class RetrievalAgent:
             exact_candidates_found=bool(
                 exact_results
             ),
+            search_query=search_query,
             relevance_threshold=(
                 self.relevance_threshold
             ),
@@ -805,7 +884,16 @@ class RetrievalAgent:
             :final_k
         ]
 
-        # 7. Return structured result
+        # 7. Ensure section-expanded chunks also have explicit relevance
+        # metadata. This prevents Context Inspector from displaying 0%
+        # merely because the chunk was added during context expansion.
+        final_results = self._rescore_selected_results(
+            final_results,
+            query_analysis,
+            exact_candidates_found=bool(exact_results),
+        )
+
+        # 8. Return structured result
 
         return {
             "success": True,

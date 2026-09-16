@@ -1,20 +1,31 @@
 """
 Domain-agnostic semantic query themes for Milestone 4.
 
-Uses only QueryAnalytics + the analytics embedding model.
-No Groq/LLM calls are made here.
-RAG retrieval and RAG embeddings are untouched.
+This module keeps the existing semantic clustering behavior, but adds a
+per-user in-memory cache so unchanged analytics data does not trigger a full
+SentenceTransformer encoding + clustering pass every time the Analytics page
+is opened.
+
+The cache is intentionally process-local. It is safe for the application's
+existing user-scoped analytics and automatically disappears on a process
+restart/deploy. The database remains the source of truth.
 """
 
 from __future__ import annotations
 
 import re
+from threading import RLock
+from typing import Any
+
 import numpy as np
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.analytics.models import QueryAnalytics
 from app.analytics.theme_embedding import embed_queries
 
+import logging
+logger = logging.getLogger(__name__)
 
 # Generic tuning parameters; no domain-specific topics are hardcoded.
 PAIR_THRESHOLD = 0.62
@@ -38,6 +49,10 @@ TRIVIAL = {
     "yes", "no", "ok", "okay", "thanks", "thank you", "thankyou",
     "hello", "hi", "hey", "sure", "fine", "great", "good",
 }
+
+# Per-process cache. Key = authenticated user id.
+_THEME_CACHE: dict[str, tuple[tuple[Any, ...], list[dict]]] = {}
+_THEME_CACHE_LOCK = RLock()
 
 
 def _normalize(text: str) -> str:
@@ -128,8 +143,6 @@ def _merge_clusters(
     """
     Second pass:
     merge nearby clusters using centroid similarity.
-
-    This gives broader themes without hardcoded domain names.
     """
     clusters = [c[:] for c in clusters]
 
@@ -167,7 +180,6 @@ def _theme_label(
 ) -> str:
     """
     Domain-agnostic deterministic label.
-
     Uses words occurring across the cluster; no predefined topic list.
     """
     counts: dict[str, int] = {}
@@ -179,7 +191,6 @@ def _theme_label(
     if not counts:
         return f"Theme {index + 1}"
 
-    # Prefer words repeated across the cluster, then longer informative words.
     common = sorted(
         counts,
         key=lambda w: (-counts[w], -len(w), w),
@@ -207,7 +218,33 @@ def _gap_score(
     return round(min(score, 1.0), 3)
 
 
-def get_query_themes(
+def _theme_cache_signature(
+    db: Session,
+    user_id: str,
+) -> tuple[Any, ...]:
+    """
+    Cheap database signature used to decide whether semantic themes are stale.
+
+    We only need to know whether this user's QueryAnalytics dataset changed.
+    """
+    count, max_id, max_created_at = (
+        db.query(
+            func.count(QueryAnalytics.id),
+            func.max(QueryAnalytics.id),
+            func.max(QueryAnalytics.created_at),
+        )
+        .filter(QueryAnalytics.user_id == user_id)
+        .one()
+    )
+
+    return (
+        int(count or 0),
+        int(max_id or 0),
+        max_created_at.isoformat() if max_created_at else None,
+    )
+
+
+def _compute_query_themes(
     db: Session,
     user_id: str,
 ) -> list[dict]:
@@ -303,3 +340,39 @@ def get_query_themes(
     )
 
     return themes
+
+
+def get_query_themes(
+    db: Session,
+    user_id: str,
+) -> list[dict]:
+    """
+    Return cached themes when the user's analytics data is unchanged.
+
+    If a new QueryAnalytics row has been recorded, recompute the semantic
+    themes and replace the cache entry for that user.
+    """
+    signature = _theme_cache_signature(db, user_id)
+
+    with _THEME_CACHE_LOCK:
+        cached = _THEME_CACHE.get(user_id)
+
+        if cached is not None and cached[0] == signature:
+            print(
+                f"QUERY THEMES CACHE HIT | user={user_id} | themes={len(cached[1])}"
+            )
+            return list(cached[1])
+
+        print(
+            f"QUERY THEMES CACHE MISS | user={user_id} | computing themes"
+        )
+
+        themes = _compute_query_themes(db, user_id)
+
+        _THEME_CACHE[user_id] = (signature, themes)
+
+        print(
+            f"QUERY THEMES CACHE STORED | user={user_id} | themes={len(themes)}"
+        )
+
+        return list(themes)

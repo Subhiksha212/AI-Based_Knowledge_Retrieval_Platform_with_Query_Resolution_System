@@ -1,5 +1,7 @@
+import json
 import re
 import uuid
+from typing import Any
 
 import chromadb
 
@@ -12,6 +14,61 @@ client = chromadb.PersistentClient(
 collection = client.get_or_create_collection(
     name="ai_query_resolution"
 )
+
+
+def _sanitize_metadata_value(value: Any) -> Any:
+    """
+    Convert application metadata into a Chroma-compatible value.
+
+    Chroma accepts primitive metadata values and flat homogeneous lists of
+    primitive values. Layout-aware OCR metadata can contain nested structures
+    such as:
+
+        [[640.0, 9.0], [768.0, 9.0], [768.0, 33.0], [640.0, 33.0]]
+
+    which Chroma rejects. Preserve those structures by serializing them to
+    JSON strings at the storage boundary. The OCR/layout processing itself
+    can continue to use the original Python structures before persistence.
+    """
+
+    if value is None:
+        return ""
+
+    if isinstance(value, (str, int, float, bool)):
+        return value
+
+    if isinstance(value, (list, tuple, dict)):
+        # Flat primitive lists are valid Chroma metadata, so preserve them.
+        if isinstance(value, (list, tuple)):
+            if all(isinstance(item, (str, int, float, bool)) for item in value):
+                return list(value)
+
+        # Nested lists / dicts / mixed structures must be serialized.
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+    # Handle numpy scalar values or other scalar-like objects without adding
+    # a hard dependency on NumPy here.
+    try:
+        if hasattr(value, "item"):
+            scalar = value.item()
+            if isinstance(scalar, (str, int, float, bool)):
+                return scalar
+    except Exception:
+        pass
+
+    return str(value)
+
+
+def _sanitize_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
+    """Return a Chroma-safe copy without mutating the original metadata."""
+
+    if not isinstance(metadata, dict):
+        return {}
+
+    return {
+        str(key): _sanitize_metadata_value(value)
+        for key, value in metadata.items()
+    }
 
 
 def add_documents(
@@ -44,6 +101,13 @@ def add_documents(
             "Number of chunks and metadata entries must be the same."
         )
 
+    # Sanitize metadata only at the Chroma persistence boundary.
+    # This preserves the layout-aware structures everywhere upstream.
+    safe_metadatas = [
+        _sanitize_metadata(metadata)
+        for metadata in metadatas
+    ]
+
     # Create a unique ID for every stored chunk.
     ids = [
         f"{document_id or uuid.uuid4().hex}_{i}"
@@ -55,7 +119,7 @@ def add_documents(
         ids=ids,
         documents=chunks,
         embeddings=embeddings,
-        metadatas=metadatas,
+        metadatas=safe_metadatas,
     )
 
     print(
@@ -243,165 +307,10 @@ def _process_exact_search_results(stored_data, terms):
                 "content": content,
                 "metadata": metadata or {},
                 "matched_terms": matched_terms,
-                "distance": None,
             }
         )
 
     return matches
-
-
-def format_results(
-    query,
-    results,
-):
-    # Convert ChromaDB results into the API response format.
-    documents = (
-        results.get(
-            "documents",
-            [[]]
-        )[0]
-        if results.get("documents")
-        else []
-    )
-
-    metadatas = (
-        results.get(
-            "metadatas",
-            [[]]
-        )[0]
-        if results.get("metadatas")
-        else []
-    )
-
-    distances = (
-        results.get(
-            "distances",
-            [[]]
-        )[0]
-        if results.get("distances")
-        else []
-    )
-
-    formatted_results = []
-
-    for index, content in enumerate(
-        documents
-    ):
-        metadata = (
-            metadatas[index]
-            if index < len(metadatas)
-            else {}
-        )
-
-        distance = (
-            distances[index]
-            if index < len(distances)
-            else None
-        )
-
-        formatted_results.append(
-            {
-                "content": content,
-                "metadata": metadata or {},
-                "distance": distance,
-            }
-        )
-
-    return {
-        "success": True,
-        "query": query,
-        "results": formatted_results,
-        "count": len(formatted_results),
-    }
-
-
-def search_by_filename(filename_query: str, raw_query: str = None) -> list[dict]:
-    """
-    Retrieve all chunks belonging to a document by its original filename.
-
-    Used as a fallback when semantic search scores are too low — e.g.
-    when the user asks about a specific file by name.
-    """
-    if not filename_query or not filename_query.strip():
-        return []
-
-    query_lower = filename_query.strip().lower()
-
-    stored_data = collection.get(
-        include=["documents", "metadatas", "embeddings"]
-    )
-
-    documents = stored_data.get("documents", []) or []
-    metadatas = stored_data.get("metadatas", []) or []
-    embeddings = stored_data.get("embeddings", [])
-    if embeddings is None:
-        embeddings = []
-    ids = stored_data.get("ids", []) or []
-
-    results = []
-    
-    import os
-    
-    # If we have a raw_query, we can embed it and calculate actual distances
-    query_embedding = None
-    if raw_query:
-        try:
-            from app.rag.embedding import load_embedding_model, embed_chunks
-            model = load_embedding_model()
-            query_embedding = embed_chunks(model, [raw_query])[0]
-        except Exception as e:
-            print(f"Failed to embed raw query for filename fallback: {e}")
-
-    # To convert distance to relevance safely
-    from app.agents.retrieval.reranker import semantic_score
-
-    for index, content in enumerate(documents):
-        meta = metadatas[index] if index < len(metadatas) else {}
-        stored_name = str(meta.get("filename", ""))
-        stored_name_lower = stored_name.lower()
-        
-        # Remove extension for flexible matching
-        name_without_ext = os.path.splitext(stored_name_lower)[0]
-
-        if (
-            query_lower in stored_name_lower
-            or stored_name_lower in query_lower
-            or query_lower in name_without_ext
-            or name_without_ext in query_lower
-        ):
-            # Calculate actual L2 distance if query embedding is available
-            distance = None
-            relevance = 0.0
-            
-            if query_embedding is not None and index < len(embeddings):
-                chunk_embedding = embeddings[index]
-                if chunk_embedding is not None:
-                    # L2 distance (which is what ChromaDB uses by default)
-                    import numpy as np
-                    distance = float(np.sum((np.array(query_embedding) - np.array(chunk_embedding)) ** 2))
-                    relevance = semantic_score(distance)
-                    
-                    print(f"\n--- DEBUG: RAW SCORE ---")
-                    print(f"Query: {raw_query}")
-                    print(f"Document: {stored_name}")
-                    print(f"Raw retrieval score: {distance}")
-                    print(f"Score type: distance")
-                    print(f"Metric: L2 distance")
-                    print(f"Calculated Relevance: {relevance}")
-                    print(f"------------------------\n")
-
-            results.append({
-                "chunk_id": ids[index] if index < len(ids) else f"fn_{index}",
-                "content": content,
-                "metadata": meta or {},
-                "distance": distance,
-                "relevance_score": relevance,
-                "semantic_score": relevance,
-                "matched_terms": [stored_name],
-            })
-
-    return results
-
 
 
 if __name__ == "__main__":

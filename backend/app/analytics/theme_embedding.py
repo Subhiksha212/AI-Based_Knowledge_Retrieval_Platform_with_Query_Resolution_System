@@ -1,24 +1,28 @@
 """
-Dedicated embedding model for query-theme analysis.
+Embedding helpers for Analytics query-theme analysis.
 
-This model is intentionally kept separate from the RAG embedding module so
-the RAG embedding model can be optimized/replaced independently later.
+Query themes intentionally use the same embedding model as RAG.  The
+shared loader prevents a second all-MiniLM-L6-v2 model instance from being
+created in the same backend process.
 """
 
 from __future__ import annotations
 
-from functools import lru_cache
-
-from sentence_transformers import SentenceTransformer
+from app.core.embedding_model import get_embedding_model
 
 
+# Kept as a compatibility constant for any code that imports it.
 THEME_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 
 
-@lru_cache(maxsize=1)
-def load_theme_embedding_model() -> SentenceTransformer:
-    """Load the analytics-only embedding model once per backend process."""
-    return SentenceTransformer(THEME_EMBEDDING_MODEL)
+def load_theme_embedding_model():
+    """
+    Return the shared SentenceTransformer instance.
+
+    This function remains available so existing analytics imports do not
+    need to change, but it now delegates to the single shared model loader.
+    """
+    return get_embedding_model()
 
 
 def embed_queries(queries: list[str]) -> list[list[float]]:
@@ -26,11 +30,13 @@ def embed_queries(queries: list[str]) -> list[list[float]]:
     if not queries:
         return []
 
-    model = load_theme_embedding_model()
+    model = get_embedding_model()
+
     embeddings = model.encode(
         queries,
         convert_to_numpy=True,
         normalize_embeddings=True,
         show_progress_bar=False,
     )
+
     return embeddings.tolist()

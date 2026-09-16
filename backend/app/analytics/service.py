@@ -1,5 +1,7 @@
 """
 Business logic for Query Analytics.
+
+All analytics statistics are calculated per authenticated user.
 """
 
 from __future__ import annotations
@@ -20,6 +22,9 @@ def log_query(
 ) -> QueryAnalytics:
     """
     Store analytics information for a query.
+
+    The router ensures that data.user_id belongs to the
+    authenticated user before this function is called.
     """
 
     analytics = QueryAnalytics(
@@ -41,29 +46,35 @@ def log_query(
 
 def get_total_queries(
     db: Session,
+    user_id: str,
 ) -> int:
     """
-    Return total number of queries.
+    Return total number of queries for one user.
     """
 
     return (
         db.query(QueryAnalytics)
+        .filter(
+            QueryAnalytics.user_id == user_id
+        )
         .count()
     )
 
 
 def get_answered_queries(
     db: Session,
+    user_id: str,
 ) -> int:
     """
-    Return number of answered queries.
+    Return number of answered queries for one user.
     """
 
     return (
         db.query(QueryAnalytics)
         .filter(
+            QueryAnalytics.user_id == user_id,
             QueryAnalytics.response_status
-            == "answered"
+            == "answered",
         )
         .count()
     )
@@ -71,16 +82,18 @@ def get_answered_queries(
 
 def get_unanswered_queries(
     db: Session,
+    user_id: str,
 ) -> int:
     """
-    Return number of unanswered queries.
+    Return number of unanswered queries for one user.
     """
 
     return (
         db.query(QueryAnalytics)
         .filter(
+            QueryAnalytics.user_id == user_id,
             QueryAnalytics.response_status
-            == "unanswered"
+            == "unanswered",
         )
         .count()
     )
@@ -88,9 +101,14 @@ def get_unanswered_queries(
 
 def get_average_confidence(
     db: Session,
+    user_id: str,
 ) -> float | None:
     """
-    Calculate average confidence score.
+    Calculate average confidence score for RAG-related queries
+    for one authenticated user.
+
+    General queries are excluded because they do not evaluate
+    knowledge-base retrieval quality.
     """
 
     result = (
@@ -99,20 +117,30 @@ def get_average_confidence(
                 QueryAnalytics.confidence_score
             )
         )
+        .filter(
+            QueryAnalytics.user_id == user_id,
+            QueryAnalytics.query_type != "general",
+            QueryAnalytics.response_status == "answered",
+            QueryAnalytics.confidence_score.isnot(None),
+        )
         .scalar()
     )
 
     if result is None:
         return None
 
-    return round(float(result), 3)
-
+    return round(
+        float(result),
+        3,
+    )
 
 def get_average_response_time(
     db: Session,
+    user_id: str,
 ) -> float | None:
     """
-    Calculate average response time in seconds.
+    Calculate average response time in seconds
+    for one user.
     """
 
     result = (
@@ -121,34 +149,57 @@ def get_average_response_time(
                 QueryAnalytics.response_time
             )
         )
+        .filter(
+            QueryAnalytics.user_id == user_id
+        )
         .scalar()
     )
 
     if result is None:
         return None
 
-    return round(float(result), 3)
+    return round(
+        float(result),
+        3,
+    )
 
 
 def get_overview(
     db: Session,
+    user_id: str,
 ) -> AnalyticsOverview:
     """
-    Return overall query analytics.
+    Return overall query analytics
+    for one authenticated user.
     """
 
-    total = get_total_queries(db)
+    total = get_total_queries(
+        db=db,
+        user_id=user_id,
+    )
 
-    answered = get_answered_queries(db)
+    answered = get_answered_queries(
+        db=db,
+        user_id=user_id,
+    )
 
-    unanswered = get_unanswered_queries(db)
+    unanswered = get_unanswered_queries(
+        db=db,
+        user_id=user_id,
+    )
 
     average_confidence = (
-        get_average_confidence(db)
+        get_average_confidence(
+            db=db,
+            user_id=user_id,
+        )
     )
 
     average_response_time = (
-        get_average_response_time(db)
+        get_average_response_time(
+            db=db,
+            user_id=user_id,
+        )
     )
 
     return AnalyticsOverview(
@@ -162,9 +213,11 @@ def get_overview(
 
 def get_query_type_statistics(
     db: Session,
+    user_id: str,
 ) -> list[dict]:
     """
-    Return number of queries grouped by query type.
+    Return number of queries grouped by query type
+    for one authenticated user.
     """
 
     results = (
@@ -173,10 +226,16 @@ def get_query_type_statistics(
             func.count(QueryAnalytics.id),
         )
         .filter(
-            QueryAnalytics.query_type.isnot(None)
+            QueryAnalytics.user_id == user_id,
+            QueryAnalytics.query_type.isnot(None),
         )
         .group_by(
             QueryAnalytics.query_type
+        )
+        .order_by(
+            func.count(
+                QueryAnalytics.id
+            ).desc()
         )
         .all()
     )

@@ -68,3 +68,17 @@ class AnalyticsOverview(BaseModel):
     unanswered_queries: int
     average_confidence: float | None
     average_response_time: float | None
+
+class QueryThemeResponse(BaseModel):
+    """Semantic common-query theme and theme-level knowledge-gap metrics."""
+
+    theme: str
+    query_count: int
+    query_share_pct: float
+    unanswered_count: int
+    low_confidence_count: int
+    average_confidence: float | None
+    gap_score: float
+    knowledge_gap: bool
+    representative_query: str
+    queries: list[str]

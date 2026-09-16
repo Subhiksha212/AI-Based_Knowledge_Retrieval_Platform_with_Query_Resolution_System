@@ -94,7 +94,7 @@ export default function ChatPage() {
   const startTextRef =
     useRef('');
 
-  const chatEndRef =
+  const messagesContainerRef =
     useRef(null);
 
 
@@ -136,8 +136,24 @@ export default function ChatPage() {
      ================================================================= */
 
   const scrollToBottom = () => {
-    chatEndRef.current?.scrollIntoView({
-      behavior: 'smooth',
+    const container = messagesContainerRef.current;
+
+    if (!container) {
+      return;
+    }
+
+    /*
+     * Scroll the actual messages container instead of using
+     * scrollIntoView() on a child element. This prevents the
+     * outer .main-content container from being scrolled when
+     * the ChatPage is remounted after switching pages.
+     *
+     * Use an instant scroll for restored conversations so the
+     * browser does not animate through an old scroll position.
+     */
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior: 'auto',
     });
   };
 
@@ -175,6 +191,17 @@ export default function ChatPage() {
         null
       );
     };
+
+
+  /*
+   * Retrieval results can use the same identifier fields
+   * as persisted source objects. Reuse the same matching
+   * logic so Context Inspector can restore the full result
+   * after a conversation is reopened.
+   */
+  const getResultIdentifier =
+    (result) =>
+      getSourceIdentifier(result);
 
 
   const normalizeMessageMetadata =
@@ -368,10 +395,7 @@ export default function ChatPage() {
             (result) => {
 
               const resultIdentifier =
-                result?.chunk_id ||
-                result?.id ||
-                result?.source ||
-                null;
+                getResultIdentifier(result);
 
               return (
                 String(
@@ -987,6 +1011,7 @@ export default function ChatPage() {
           inputValue
         ).trim();
 
+      console.log("[CHAT] Current user question:", text);
 
       if (!text || isTyping) {
         return;
@@ -1209,10 +1234,7 @@ export default function ChatPage() {
                 (result) => {
 
                   const resultIdentifier =
-                    result?.chunk_id ||
-                    result?.id ||
-                    result?.source ||
-                    null;
+                    getResultIdentifier(result);
 
                   return (
                     String(
@@ -1360,10 +1382,7 @@ export default function ChatPage() {
             (result) => {
 
               const resultIdentifier =
-                result?.chunk_id ||
-                result?.id ||
-                result?.source ||
-                null;
+                getResultIdentifier(result);
 
               return (
                 String(
@@ -1439,6 +1458,7 @@ export default function ChatPage() {
         display: 'flex',
         width: '100%',
         height: '100%',
+        minHeight: 0,
         overflow: 'hidden',
       }}
     >
@@ -1454,6 +1474,7 @@ export default function ChatPage() {
           display: 'flex',
           flexDirection: 'column',
           height: '100%',
+          minHeight: 0,
           borderRight:
             '1px solid var(--border-color)',
           position: 'relative',
@@ -1868,8 +1889,10 @@ export default function ChatPage() {
 
         {messages.length > 0 && (
           <div
+            ref={messagesContainerRef}
             style={{
               flex: 1,
+              minHeight: 0,
               overflowY:
                 'auto',
               padding:
@@ -1979,11 +2002,6 @@ export default function ChatPage() {
 
               </div>
             )}
-
-
-            <div
-              ref={chatEndRef}
-            />
 
           </div>
         )}

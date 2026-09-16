@@ -23,13 +23,15 @@ export default function FileUploader({
     'jpg',
     'jpeg',
     'png',
+
   ];
 
 
   useEffect(() => {
     return () => {
       if (pollingRef.current) {
-        clearInterval(pollingRef.current);
+        clearTimeout(pollingRef.current);
+        pollingRef.current = null;
       }
     };
   }, []);
@@ -78,7 +80,8 @@ export default function FileUploader({
 
   const pollUploadStatus = (jobId) => {
     if (pollingRef.current) {
-      clearInterval(pollingRef.current);
+      clearTimeout(pollingRef.current);
+      pollingRef.current = null;
     }
 
     const checkStatus = async () => {
@@ -92,13 +95,7 @@ export default function FileUploader({
           status.status === 'completed' ||
           status.status === 'failed'
         ) {
-          if (pollingRef.current) {
-            clearInterval(
-              pollingRef.current
-            );
-
-            pollingRef.current = null;
-          }
+          pollingRef.current = null;
 
           if (
             status.status === 'completed'
@@ -114,19 +111,28 @@ export default function FileUploader({
               }
             }
           }
+
+          return;
         }
+
+        pollingRef.current = setTimeout(
+          checkStatus,
+          1500
+        );
       } catch (error) {
         console.error(
           'Could not retrieve upload status:',
           error
         );
+
+        pollingRef.current = setTimeout(
+          checkStatus,
+          2000
+        );
       }
     };
 
     checkStatus();
-
-    pollingRef.current =
-      setInterval(checkStatus, 700);
   };
 
 
@@ -150,7 +156,7 @@ export default function FileUploader({
       )
     ) {
       setErrorMessage(
-        'Unsupported file format. Please upload PDF, TXT, DOCX, or CSV.'
+        'Unsupported file format. Please upload PDF, TXT, DOCX, CSV, JPG, JPEG, or PNG.'
       );
 
       setUploadState('error');

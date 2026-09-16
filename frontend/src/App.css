@@ -296,9 +296,9 @@
 /* ================================================================
    ChatPage responsive layout
    ================================================================ */
-.chat-page-layout { min-width: 0; }
-.chat-page-main-panel { min-width: 0; }
-.context-inspector-panel { min-width: 0; }
+.chat-page-layout { min-width: 0; min-height: 0; }
+.chat-page-main-panel { min-width: 0; min-height: 0; }
+.context-inspector-panel { min-width: 0; min-height: 0; }
 @media (max-width: 900px) {
   .chat-page-layout { flex-direction: column; overflow-y: auto !important; overflow-x: hidden !important; }
   .chat-page-main-panel { width: 100% !important; height: 65vh !important; min-height: 420px; flex: 0 0 65vh !important; border-right: none !important; border-bottom: 1px solid var(--border-color); }

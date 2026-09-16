@@ -1,25 +1,49 @@
-from datetime import datetime, timezone
+import logging
+import time
 import uuid
+from datetime import datetime, timezone
 
-from app.core.config import ALLOWED_EXTENSIONS, MAX_FILE_SIZE, UPLOAD_FOLDER
+from sqlalchemy.orm import Session
+
+from app.core.config import (
+    ALLOWED_EXTENSIONS,
+    MAX_FILE_SIZE,
+    UPLOAD_FOLDER,
+)
+
+from app.core.database import SessionLocal
+from app.core.models import KnowledgeBaseDocument
+
 from app.rag.chromadb_service import add_documents
 from app.rag.chunking import chunk_text
 from app.rag.embedding import embed_chunks, load_embedding_model
 from app.rag.extractor import extract_document
+
 from app.services.metadata_service import (
-    documents,
     processing_jobs,
-    save_documents,
     update_document_status,
     update_job,
 )
 
-# Create the upload directory if it does not exist.
+logger = logging.getLogger(__name__)
+
+
+# -------------------------------------------------------------------
+# Upload directory
+# -------------------------------------------------------------------
+
 UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
 
 
-# Validate the uploaded file type.
+# -------------------------------------------------------------------
+# Validation
+# -------------------------------------------------------------------
+
 def validate_upload_filename(filename):
+    """
+    Validate uploaded filename and extension.
+    """
+
     if not filename:
         return {
             "status": "failed",
@@ -33,15 +57,18 @@ def validate_upload_filename(filename):
             "status": "failed",
             "message": (
                 "Unsupported file type. "
-                "Use PDF, DOCX, TXT or CSV."
+                "Use PDF, DOCX, TXT, CSV, JPG, JPEG or PNG."
             ),
         }
 
     return None
 
 
-# Validate the uploaded file size and content.
 def validate_upload_data(file_data):
+    """
+    Validate uploaded file contents and size.
+    """
+
     if len(file_data) == 0:
         return {
             "status": "failed",
@@ -57,96 +84,90 @@ def validate_upload_data(file_data):
     return None
 
 
-# Save the uploaded file and create its processing job.
-def create_upload_job(file, file_data, extension, user_id=None):
-    import hashlib
-    file_hash = hashlib.sha256(file_data).hexdigest()
+# -------------------------------------------------------------------
+# Create upload job
+# -------------------------------------------------------------------
 
-    # Deduplicate: Clean up any previous indexing of the exact same file content by this user
-    existing_dup_id = None
-    for d_id, d_meta in list(documents.items()):
-        if d_meta.get("file_hash") == file_hash and (not user_id or d_meta.get("user_id") == user_id):
-            existing_dup_id = d_id
-            break
+def create_upload_job(
+    db: Session,
+    file,
+    file_data,
+    extension,
+    user_id=None,
+):
+    """
+    Save uploaded file and create the document record in PostgreSQL.
 
-    if existing_dup_id:
-        from app.rag.chromadb_service import delete_documents_for_user, delete_documents
-        try:
-            if user_id:
-                delete_documents_for_user(existing_dup_id, user_id)
-            else:
-                delete_documents(existing_dup_id)
-        except Exception:
-            pass
-        documents.pop(existing_dup_id, None)
+    IMPORTANT:
+    The `db` argument is intentionally kept because your existing
+    upload.py passes the SQLAlchemy session into this function.
+    """
 
     document_id = uuid.uuid4().hex
     job_id = uuid.uuid4().hex
 
-    unique_filename = (
-        f"{document_id}{extension}"
-    )
+    unique_filename = f"{document_id}{extension}"
 
-    file_path = (
-        UPLOAD_FOLDER / unique_filename
-    )
+    file_path = UPLOAD_FOLDER / unique_filename
 
-    # Save the uploaded file locally.
-    with open(
-        file_path,
-        "wb",
-    ) as output_file:
-        output_file.write(
-            file_data
+    # ---------------------------------------------------------------
+    # Save temporary uploaded file
+    # ---------------------------------------------------------------
+
+    with open(file_path, "wb") as output_file:
+        output_file.write(file_data)
+
+    try:
+        # -----------------------------------------------------------
+        # Store document metadata in PostgreSQL
+        # -----------------------------------------------------------
+
+        db_doc = KnowledgeBaseDocument(
+            id=document_id,
+            user_id=str(user_id) if user_id else "",
+            filename=unique_filename,
+            original_filename=file.filename,
+            file_type=extension.lstrip("."),
+            file_size=len(file_data),
+            status="processing",
         )
 
-    uploaded_at = datetime.now(
-        timezone.utc
-    ).isoformat()
+        db.add(db_doc)
+        db.commit()
 
-    # Store document metadata.
-    document = {
-        "id": document_id,
-        "jobId": job_id,
-        "name": file.filename,
-        "size": len(file_data),
-        "file_hash": file_hash,
-        "user_id": user_id or "",
-        "status": "processing",
-        "stage": "uploaded",
-        "progress": 10,
-        "message": "File uploaded successfully.",
-        "uploadedAt": uploaded_at,
-        "chunksCount": 0,
-        "embeddingsCount": 0,
-        "vectorsStored": 0,
-    }
+        # -----------------------------------------------------------
+        # Initialize upload-job progress
+        # -----------------------------------------------------------
 
-    documents[
-        document_id
-    ] = document
+        processing_jobs[job_id] = {
+            "jobId": job_id,
+            "documentId": document_id,
+            "filename": file.filename,
+            "status": "processing",
+            "stage": "uploaded",
+            "progress": 10,
+            "message": "File uploaded successfully.",
+            "chunksCount": 0,
+            "embeddingsCount": 0,
+            "vectorsStored": 0,
+            "error": None,
+        }
 
-    save_documents()
+        return document_id, job_id, file_path
 
-    # Initialize upload job status.
-    processing_jobs[job_id] = {
-        "jobId": job_id,
-        "documentId": document_id,
-        "filename": file.filename,
-        "status": "processing",
-        "stage": "uploaded",
-        "progress": 10,
-        "message": "File uploaded successfully.",
-        "chunksCount": 0,
-        "embeddingsCount": 0,
-        "vectorsStored": 0,
-        "error": None,
-    }
+    except Exception:
+        db.rollback()
 
-    return document_id, job_id, file_path
+        if file_path.exists():
+            file_path.unlink()
+
+        raise
 
 
-# Process the uploaded document in the background.
+# -------------------------------------------------------------------
+# Background document processing
+# -------------------------------------------------------------------
+
 def process_uploaded_document(
     job_id,
     document_id,
@@ -154,8 +175,30 @@ def process_uploaded_document(
     original_filename,
     user_id=None,
 ):
+    """
+    Process uploaded document:
+
+        File
+          ↓
+        OCR / extraction
+          ↓
+        Chunking
+          ↓
+        Embeddings
+          ↓
+        ChromaDB
+          ↓
+        PostgreSQL status = completed
+    """
+
+    process_start_time = time.perf_counter()
+
     try:
-        # Update status before extracting text.
+
+        # ===========================================================
+        # 1. OCR / TEXT EXTRACTION
+        # ===========================================================
+
         update_job(
             job_id,
             status="processing",
@@ -172,36 +215,107 @@ def process_uploaded_document(
             message="Extracting text from document...",
         )
 
-        def page_progress(page_num, total_pages):
-            progress_pct = 20 + int((page_num / max(total_pages, 1)) * 15)
-            msg = f"Processing page {page_num}/{total_pages}..."
-            update_job(job_id, stage="extracting", progress=progress_pct, message=msg)
-            update_document_status(document_id, stage="extracting", progress=progress_pct, message=msg)
+        # -----------------------------------------------------------
+        # Page-level progress callback for OCR-enabled PDF extraction
+        # -----------------------------------------------------------
 
-        # Extract text from the uploaded document using PyMuPDF + PP-OCRv5 Mobile.
-        extraction_result = extract_document(
-            str(file_path),
-            page_progress_callback=page_progress
+        def page_progress(page_num, total_pages):
+            try:
+                total_pages = max(int(total_pages), 1)
+                page_num = min(
+                    max(int(page_num), 1),
+                    total_pages,
+                )
+
+                # OCR extraction occupies approximately 20% -> 35%
+                progress = 20 + int(
+                    (page_num / total_pages) * 15
+                )
+
+                message = (
+                    f"Processing page "
+                    f"{page_num}/{total_pages}..."
+                )
+
+                update_job(
+                    job_id,
+                    stage="extracting",
+                    progress=progress,
+                    message=message,
+                )
+
+                update_document_status(
+                    document_id,
+                    stage="extracting",
+                    progress=progress,
+                    message=message,
+                )
+
+            except Exception as callback_error:
+                # Progress callback failure should never terminate OCR.
+                logger.warning(
+                    "OCR progress callback failed: %s",
+                    callback_error,
+                )
+
+        logger.info(
+            "[OCR] Starting extraction for '%s'",
+            original_filename,
         )
 
-        if not extraction_result or not isinstance(extraction_result, dict):
+        extraction_result = extract_document(
+            str(file_path),
+            page_progress_callback=page_progress,
+        )
+
+        if not extraction_result or not isinstance(
+            extraction_result,
+            dict,
+        ):
             raise ValueError(
-                "No text could be extracted from the file"
+                "No text could be extracted from the file."
             )
-            
-        extracted_text = (extraction_result.get("text") or "").strip()
-        extracted_images = extraction_result.get("images", [])
+
+        extracted_text = (
+            extraction_result.get("text") or ""
+        ).strip()
+
+        extracted_images = (
+            extraction_result.get("images") or []
+        )
 
         if not extracted_text and not extracted_images:
             raise ValueError(
-                "No readable text or content could be extracted from the file."
+                "No readable text or content could be "
+                "extracted from the file."
             )
-            
-        # Prepend the original filename to the text to ensure semantic matching works
-        # when users search for specific files by name (especially important for images)
-        full_text_with_header = f"File Name: {original_filename}\n\n{extracted_text}" if extracted_text else ""
 
-        # Update status before chunk creation.
+        logger.info(
+            "[OCR] Extraction completed for '%s' "
+            "(text chars=%d, embedded chunks=%d)",
+            original_filename,
+            len(extracted_text),
+            len(extracted_images),
+        )
+
+        # -----------------------------------------------------------
+        # Include original filename in searchable text.
+        # This helps queries such as:
+        # "What is in mcp_handwritten_notes.jpeg?"
+        # -----------------------------------------------------------
+
+        if extracted_text:
+            full_text = (
+                f"File Name: {original_filename}\n\n"
+                f"{extracted_text}"
+            )
+        else:
+            full_text = ""
+
+        # ===========================================================
+        # 2. CHUNKING
+        # ===========================================================
+
         update_job(
             job_id,
             stage="chunking",
@@ -216,11 +330,24 @@ def process_uploaded_document(
             message="Creating document chunks...",
         )
 
-        # Split extracted text into chunks.
         chunks = []
-        if full_text_with_header:
-            from app.rag.chunking import chunk_text
-            chunks = chunk_text(full_text_with_header)
+
+        chunking_start = time.perf_counter()
+
+        if full_text:
+            chunks = chunk_text(full_text)
+
+        chunking_time = time.perf_counter() - chunking_start
+
+        logger.info(
+            "[RAG] Chunking completed for '%s' in %.2fs",
+            original_filename,
+            chunking_time,
+        )
+
+        # -----------------------------------------------------------
+        # Metadata for normal extracted text
+        # -----------------------------------------------------------
 
         metadatas = [
             {
@@ -228,39 +355,96 @@ def process_uploaded_document(
                 "filename": original_filename,
                 "chunk_index": index,
                 "source_type": "text",
-                "user_id": user_id or "",
+                "user_id": str(user_id) if user_id else "",
             }
             for index in range(len(chunks))
         ]
 
-        # Add embedded image chunks
-        for img in extracted_images:
-            page_info = f"Page {img['metadata']['page_number']} " if "page_number" in img["metadata"] else ""
-            img_content = f"File Name: {original_filename}\n{page_info}Image {img['metadata'].get('image_index', '?')}\n{img['content']}"
-            chunks.append(img_content)
-            
-            img_metadata = img["metadata"]
-            img_metadata.update({
-                "document_id": document_id,
-                "filename": original_filename,
-                "chunk_index": len(chunks) - 1,
-                "user_id": user_id or "",
-            })
-            metadatas.append(img_metadata)
+        # -----------------------------------------------------------
+        # Add OCR-derived page/image chunks
+        # -----------------------------------------------------------
+
+        for image_item in extracted_images:
+
+            metadata = dict(
+                image_item.get("metadata") or {}
+            )
+
+            page_number = metadata.get(
+                "page_number"
+            )
+
+            image_index = metadata.get(
+                "image_index",
+                "?",
+            )
+
+            content = str(
+                image_item.get("content") or ""
+            ).strip()
+
+            if not content:
+                continue
+
+            page_info = (
+                f"Page {page_number} "
+                if page_number is not None
+                else ""
+            )
+
+            image_content = (
+                f"File Name: {original_filename}\n"
+                f"{page_info}"
+                f"Image {image_index}\n"
+                f"{content}"
+            )
+
+            chunks.append(image_content)
+
+            # -------------------------------------------------------
+            # Preserve OCR/extraction metadata supplied by extractor.
+            # -------------------------------------------------------
+
+            metadata.update(
+                {
+                    "document_id": document_id,
+                    "filename": original_filename,
+                    "chunk_index": len(chunks) - 1,
+                    "user_id": (
+                        str(user_id)
+                        if user_id
+                        else ""
+                    ),
+                }
+            )
+
+            # Remove any old VLM label if present.
+            if metadata.get("source_type") == "vlm":
+                metadata["source_type"] = "ocr"
+
+            # If extractor supplied no source type, use OCR.
+            metadata.setdefault(
+                "source_type",
+                "ocr",
+            )
+
+            metadatas.append(metadata)
 
         if not chunks:
             raise ValueError(
-                "No chunks could be created from the file"
+                "No chunks could be created from the file."
             )
 
         chunks_count = len(chunks)
 
-        # Store chunk statistics.
         update_job(
             job_id,
             stage="chunking",
             progress=50,
-            message=f"Created {chunks_count} document chunks.",
+            message=(
+                f"Created {chunks_count} "
+                f"document chunks."
+            ),
             chunks_count=chunks_count,
         )
 
@@ -268,11 +452,17 @@ def process_uploaded_document(
             document_id,
             stage="chunking",
             progress=50,
-            message=f"Created {chunks_count} document chunks.",
+            message=(
+                f"Created {chunks_count} "
+                f"document chunks."
+            ),
             chunks_count=chunks_count,
         )
 
-        # Update status before embedding generation.
+        # ===========================================================
+        # 3. EMBEDDINGS
+        # ===========================================================
+
         update_job(
             job_id,
             stage="embedding",
@@ -287,27 +477,42 @@ def process_uploaded_document(
             message="Generating embeddings...",
         )
 
-        # Load the embedding model and generate vectors.
+        logger.info(
+            "[RAG] Loading embedding model..."
+        )
+
         model = load_embedding_model()
+
+        embedding_start = time.perf_counter()
 
         embeddings = embed_chunks(
             model,
             chunks,
         )
 
+        embedding_time = time.perf_counter() - embedding_start
+
+        logger.info(
+            "[RAG] Embeddings generated for '%s' in %.2fs",
+            original_filename,
+            embedding_time,
+        )
+
         if not embeddings:
             raise ValueError(
-                "No embeddings could be generated"
+                "No embeddings could be generated."
             )
 
         embeddings_count = len(embeddings)
 
-        # Store embedding statistics.
         update_job(
             job_id,
             stage="embedding",
             progress=75,
-            message=f"Generated {embeddings_count} embeddings.",
+            message=(
+                f"Generated {embeddings_count} "
+                f"embeddings."
+            ),
             embeddings_count=embeddings_count,
         )
 
@@ -315,11 +520,17 @@ def process_uploaded_document(
             document_id,
             stage="embedding",
             progress=75,
-            message=f"Generated {embeddings_count} embeddings.",
+            message=(
+                f"Generated {embeddings_count} "
+                f"embeddings."
+            ),
             embeddings_count=embeddings_count,
         )
 
-        # Update status before storing vectors.
+        # ===========================================================
+        # 4. CHROMADB STORAGE
+        # ===========================================================
+
         update_job(
             job_id,
             stage="storing",
@@ -334,7 +545,8 @@ def process_uploaded_document(
             message="Storing vectors in ChromaDB...",
         )
 
-        # Store embeddings in ChromaDB.
+        storage_start = time.perf_counter()
+
         add_documents(
             chunks,
             embeddings,
@@ -342,14 +554,25 @@ def process_uploaded_document(
             document_id=document_id,
         )
 
+        storage_time = time.perf_counter() - storage_start
+
+        logger.info(
+            "[RAG] ChromaDB storage completed for '%s' "
+            "in %.2fs",
+            original_filename,
+            storage_time,
+        )
+
         vectors_stored = len(chunks)
 
-        # Update vector storage progress.
         update_job(
             job_id,
             stage="storing",
             progress=95,
-            message=f"Stored {vectors_stored} vectors in ChromaDB.",
+            message=(
+                f"Stored {vectors_stored} "
+                f"vectors in ChromaDB."
+            ),
             vectors_stored=vectors_stored,
         )
 
@@ -357,34 +580,54 @@ def process_uploaded_document(
             document_id,
             stage="storing",
             progress=95,
-            message=f"Stored {vectors_stored} vectors in ChromaDB.",
+            message=(
+                f"Stored {vectors_stored} "
+                f"vectors in ChromaDB."
+            ),
             vectors_stored=vectors_stored,
         )
+
+        # ===========================================================
+        # 5. MARK POSTGRESQL DOCUMENT AS COMPLETED
+        # ===========================================================
 
         completed_at = datetime.now(
             timezone.utc
         ).isoformat()
 
-        document = documents.get(
-            document_id
-        )
+        db_session = SessionLocal()
 
-        # Mark the document as successfully indexed.
-        if document:
-            document["status"] = "indexed"
-            document["stage"] = "completed"
-            document["progress"] = 100
-            document["message"] = (
-                "Document processed successfully"
+        try:
+
+            db_doc = (
+                db_session.query(
+                    KnowledgeBaseDocument
+                )
+                .filter(
+                    KnowledgeBaseDocument.id
+                    == document_id
+                )
+                .first()
             )
-            document["chunksCount"] = chunks_count
-            document["embeddingsCount"] = embeddings_count
-            document["vectorsStored"] = vectors_stored
-            document["processedAt"] = completed_at
 
-            save_documents()
+            if db_doc is None:
+                raise ValueError(
+                    "Document record was not found "
+                    "in PostgreSQL."
+                )
 
-        # Update the final job status.
+            db_doc.status = "completed"
+
+            # Commit final database state.
+            db_session.commit()
+
+        finally:
+            db_session.close()
+
+        # ===========================================================
+        # 6. FINAL JOB STATUS
+        # ===========================================================
+
         update_job(
             job_id,
             status="completed",
@@ -396,9 +639,41 @@ def process_uploaded_document(
             vectors_stored=vectors_stored,
         )
 
-    # Handle any processing errors.
+        update_document_status(
+            document_id,
+            status="completed",
+            stage="completed",
+            progress=100,
+            message="Document processed successfully.",
+            chunks_count=chunks_count,
+            embeddings_count=embeddings_count,
+            vectors_stored=vectors_stored,
+        )
+
+        total_time = (
+            time.perf_counter()
+            - process_start_time
+        )
+
+        logger.info(
+            "[RAG] Total processing time for '%s': %.2fs",
+            original_filename,
+            total_time,
+        )
+
+    # ===============================================================
+    # ERROR HANDLING
+    # ===============================================================
+
     except Exception as error:
+
         error_message = str(error)
+
+        logger.exception(
+            "[UPLOAD] Processing failed for '%s': %s",
+            original_filename,
+            error_message,
+        )
 
         update_job(
             job_id,
@@ -418,7 +693,56 @@ def process_uploaded_document(
             error=error_message,
         )
 
-    # Remove the temporary uploaded file.
+        # -----------------------------------------------------------
+        # Mark PostgreSQL document as failed
+        # -----------------------------------------------------------
+
+        db_session = SessionLocal()
+
+        try:
+
+            db_doc = (
+                db_session.query(
+                    KnowledgeBaseDocument
+                )
+                .filter(
+                    KnowledgeBaseDocument.id
+                    == document_id
+                )
+                .first()
+            )
+
+            if db_doc:
+                db_doc.status = "failed"
+                db_session.commit()
+
+        except Exception as db_error:
+
+            db_session.rollback()
+
+            logger.exception(
+                "[UPLOAD] Failed to update PostgreSQL "
+                "failure status: %s",
+                db_error,
+            )
+
+        finally:
+            db_session.close()
+
+    # ===============================================================
+    # CLEANUP
+    # ===============================================================
+
     finally:
-        if file_path.exists():
-            file_path.unlink()
+
+        try:
+            if file_path.exists():
+                file_path.unlink()
+
+        except Exception as cleanup_error:
+
+            logger.warning(
+                "[UPLOAD] Could not remove temporary file '%s': %s",
+                file_path,
+                cleanup_error,
+            )

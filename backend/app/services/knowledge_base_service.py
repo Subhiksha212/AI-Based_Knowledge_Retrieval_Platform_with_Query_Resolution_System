@@ -48,6 +48,16 @@ def delete_user_document(db: Session, document_id: str, user_id: str) -> bool:
     # Delete postgres record
     db.delete(document)
     db.commit()
+
+    # Clean up any active jobs in memory
+    from app.services.metadata_service import processing_jobs
+    document_job_ids = [
+        job_id for job_id, job in processing_jobs.items()
+        if job.get("documentId") == document_id
+    ]
+    for job_id in document_job_ids:
+        processing_jobs.pop(job_id, None)
+
     return True
 
 

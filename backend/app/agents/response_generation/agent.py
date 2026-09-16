@@ -323,24 +323,51 @@ def _calculate_citation_coverage(
 
 def _calculate_retrieval_quality(
     sources: list[Source],
+    chunks: list[dict[str, Any] | str] | None = None,
 ) -> float:
     """
-    Calculate the average relevance score of cited chunks.
+    Calculate retrieval evidence quality without making citation parsing
+    a hard prerequisite.
 
-    If relevance scores are unavailable, use a conservative
-    fallback for cited sources.
+    When cited sources are available, their relevance remains the strongest
+    evidence. When the LLM omits citations, fall back to the ranked retrieved
+    candidates so a good retrieval result is not collapsed to a fixed 0.15.
     """
 
-    scores = [
+    cited_scores = [
         source.relevance_score
         for source in sources
         if source.relevance_score is not None
     ]
 
-    if not scores:
-        return 0.50 if sources else 0.0
+    if cited_scores:
+        return sum(cited_scores) / len(cited_scores)
 
-    return sum(scores) / len(scores)
+    if not chunks:
+        return 0.0
+
+    candidate_scores: list[float] = []
+
+    for chunk in chunks:
+        score = _get_relevance_score(chunk)
+        if score is not None:
+            candidate_scores.append(score)
+
+    if not candidate_scores:
+        return 0.0
+
+    # Top-ranked evidence matters more than distant candidates.
+    candidate_scores.sort(reverse=True)
+    weights = (0.60, 0.25, 0.15)
+    weighted_total = 0.0
+    weight_total = 0.0
+
+    for index, score in enumerate(candidate_scores[:3]):
+        weight = weights[index]
+        weighted_total += score * weight
+        weight_total += weight
+
+    return weighted_total / weight_total
 
 
 def _estimate_confidence(
@@ -348,42 +375,41 @@ def _estimate_confidence(
     chunks: list[dict[str, Any] | str],
 ) -> float:
     """
-    Estimate confidence from:
+    Estimate grounded-answer confidence from: 
 
-        1. Retrieval quality
-        2. Citation coverage
+        1. Retrieval evidence quality.
+        2. Citation coverage.
 
-    This is a heuristic confidence indicator, NOT a calibrated
-    probability of factual correctness.
+    Missing citations reduce confidence, but no longer replace strong
+    retrieval evidence with a hard-coded 0.15. This is a heuristic signal,
+    not a calibrated probability of factual correctness.
     """
 
     if not chunks:
         return 0.0
 
-    if not sources:
-        # Context was available but the model failed to produce
-        # a recognizable citation.
-        return 0.15
+    retrieval_quality = _calculate_retrieval_quality(
+        sources,
+        chunks,
+    )
 
-    retrieval_quality = (
-        _calculate_retrieval_quality(
-            sources
+    citation_coverage = _calculate_citation_coverage(
+        sources,
+        chunks,
+    )
+
+    if sources:
+        # Citations are useful evidence of grounding, but they should not
+        # dominate retrieval quality because an otherwise good answer can
+        # occasionally omit a marker.
+        confidence = (
+            retrieval_quality * 0.80
+            + citation_coverage * 0.20
         )
-    )
-
-    citation_coverage = (
-        _calculate_citation_coverage(
-            sources,
-            chunks,
-        )
-    )
-
-    # Retrieval quality is intentionally dominant because not every
-    # valid answer needs to cite every retrieved candidate.
-    confidence = (
-        retrieval_quality * 0.70
-        + citation_coverage * 0.30
-    )
+    else:
+        # No recognizable citation: retain retrieval evidence but apply a
+        # meaningful 20% grounding penalty instead of a fixed 0.15 score.
+        confidence = retrieval_quality * 0.80
 
     return round(
         max(
@@ -471,6 +497,7 @@ def generate_response(
     # Build grounded prompt
     # ---------------------------------------------------------------
 
+    print(f"[CHAT] Query entering LLM: {question}")
     prompt = build_prompt(
         question,
         valid_chunks,

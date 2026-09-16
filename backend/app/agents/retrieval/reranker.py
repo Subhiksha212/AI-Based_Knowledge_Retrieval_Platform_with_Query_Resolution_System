@@ -9,7 +9,8 @@ Main responsibilities:
     2. Measure keyword coverage.
     3. Measure exact-term coverage.
     4. Reward exact-term + keyword co-occurrence.
-    5. Prefer candidates satisfying the complete query intent.
+    5. Prefer candidates satisfying the complete query intent without
+       making literal whole-query matching dominant.
     6. Penalize candidates that miss required exact entities when
        exact retrieval has already found matching candidates.
     7. Filter low-confidence candidates.
@@ -40,20 +41,20 @@ EXACT_MISS_PENALTY = 0.25
 # Semantic search remains the main general-purpose signal.
 QUERY_TYPE_WEIGHTS: dict[str, dict[str, float]] = {
     "factual": {
-        "semantic": 0.55,
-        "keyword": 0.25,
+        "semantic": 0.60,
+        "keyword": 0.20,
         "exact": 0.10,
         "synergy": 0.10,
     },
     "procedural": {
-        "semantic": 0.60,
-        "keyword": 0.25,
+        "semantic": 0.65,
+        "keyword": 0.20,
         "exact": 0.05,
         "synergy": 0.10,
     },
     "comparative": {
-        "semantic": 0.55,
-        "keyword": 0.25,
+        "semantic": 0.60,
+        "keyword": 0.20,
         "exact": 0.05,
         "synergy": 0.15,
     },
@@ -155,12 +156,14 @@ def _contains_term(
 
 def semantic_score(distance: Any) -> float:
     """
-    Convert ChromaDB distance into a bounded relevance score.
+    Convert a ChromaDB distance into a bounded base relevance score.
 
     Lower distance => higher score.
 
-    This keeps the Milestone 1 semantic scoring behavior:
-        1 / (1 + distance)
+    The score is intentionally computed independently for each candidate.
+    It is not normalized against the current candidate set, so a relevant
+    second-best chunk cannot be driven to zero simply because another chunk
+    has a better distance.
     """
 
     if distance is None:
@@ -178,6 +181,41 @@ def semantic_score(distance: Any) -> float:
     return max(
         0.0,
         min(1.0, score),
+    )
+
+
+def query_match_score(
+    content: str,
+    search_query: str | None,
+) -> float:
+    """
+    Measure how strongly the chunk matches the complete retrieval query.
+
+    Phrase matches receive the strongest signal, followed by token
+    coverage. Stop-word filtering is intentionally light and generic so
+    the function remains domain-agnostic.
+    """
+
+    normalized_content = _normalize_text(content)
+    normalized_query = _normalize_text(search_query)
+
+    if not normalized_content or not normalized_query:
+        return 0.0
+
+    if normalized_query in normalized_content:
+        return 1.0
+
+    query_tokens = _tokenize(normalized_query)
+
+    if not query_tokens:
+        return 0.0
+
+    content_tokens = _tokenize(normalized_content)
+    matched = len(query_tokens.intersection(content_tokens))
+
+    return max(
+        0.0,
+        min(1.0, matched / len(query_tokens)),
     )
 
 
@@ -473,6 +511,7 @@ def rerank_results(
     keywords: list[str] | None = None,
     query_type: str | None = None,
     exact_candidates_found: bool = False,
+    search_query: str | None = None,
     relevance_threshold: float | None = (
         DEFAULT_RELEVANCE_THRESHOLD
     ),
@@ -526,13 +565,16 @@ def rerank_results(
         dict[str, Any]
     ] = []
 
-    for result in candidates:
+    for candidate_index, result in enumerate(candidates):
 
         content = result.get(
             "content",
             "",
         )
 
+        # Use the candidate's own semantic signal. Do not normalize this
+        # against other candidates because that can turn a genuinely
+        # relevant lower-ranked chunk into 0.0.
         semantic = semantic_score(
             result.get("distance")
         )
@@ -556,6 +598,11 @@ def rerank_results(
             ),
             exact_terms=exact_terms,
             keywords=keywords,
+        )
+
+        query_match = query_match_score(
+            content,
+            search_query,
         )
 
         evidence = calculate_evidence_score(
@@ -582,9 +629,13 @@ def rerank_results(
             + synergy * weights["synergy"]
         )
 
+        # Keep query-match as a small precision bonus. The score is driven
+        # primarily by the candidate's own semantic evidence plus generic
+        # lexical/entity signals.
         final_score = (
-            base_score * 0.75
-            + evidence * 0.25
+            base_score * 0.80
+            + evidence * 0.15
+            + query_match * 0.05
         )
 
         # -------------------------------------------------------------
@@ -632,10 +683,9 @@ def rerank_results(
             and exact > 0.0
             and keyword == 0.0
         ):
-            final_score = min(
-                final_score,
-                0.60,
-            )
+            # Preserve the safety intent without imposing an artificial
+            # absolute ceiling on genuinely strong exact-entity matches.
+            final_score *= 0.85
 
         # -------------------------------------------------------------
         # Build result metadata
@@ -666,6 +716,11 @@ def rerank_results(
 
         item["evidence_score"] = round(
             evidence,
+            6,
+        )
+
+        item["query_match_score"] = round(
+            query_match,
             6,
         )
 

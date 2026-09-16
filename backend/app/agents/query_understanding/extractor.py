@@ -71,7 +71,7 @@ def extract_exact_terms(query: str) -> list[str]:
     # Identifiers such as Name_1.
     terms.extend(
         re.findall(
-            r"\b[\w-]*_[\w-]*\d[\w-]*\b",
+            r"\b\d{3,}\b",
             normalized_query,
         )
     )

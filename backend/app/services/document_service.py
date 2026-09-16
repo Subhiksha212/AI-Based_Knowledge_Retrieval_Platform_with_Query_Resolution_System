@@ -1,4 +1,4 @@
-from app.rag.chromadb_service import delete_documents
+from app.rag.chromadb_service import delete_documents_for_user
 from app.services.metadata_service import (
     documents,
     processing_jobs,
@@ -7,10 +7,10 @@ from app.services.metadata_service import (
 
 
 # Return all uploaded documents.
-def get_all_documents():
-    return list(
-        documents.values()
-    )
+def get_all_documents(user_id=None):
+    if user_id:
+        return [doc for doc in documents.values() if doc.get("user_id") == user_id]
+    return list(documents.values())
 
 
 # Return the processing status of an upload job.
@@ -23,63 +23,39 @@ def get_upload_job_status(job_id):
     if job is not None:
         return job
 
-    # Check completed documents if the job is no longer active.
-    for document in documents.values():
-        if document.get(
-            "jobId"
-        ) == job_id:
-            return {
-                "jobId": job_id,
-                "documentId": document["id"],
-                "filename": document["name"],
-                "status": document.get(
-                    "status",
-                    "unknown",
-                ),
-                "stage": document.get(
-                    "stage",
-                    "unknown",
-                ),
-                "progress": document.get(
-                    "progress",
-                    0,
-                ),
-                "message": document.get(
-                    "message",
-                    "",
-                ),
-                "chunksCount": document.get(
-                    "chunksCount",
-                    0,
-                ),
-                "embeddingsCount": document.get(
-                    "embeddingsCount",
-                    0,
-                ),
-                "vectorsStored": document.get(
-                    "vectorsStored",
-                    0,
-                ),
-                "error": document.get(
-                    "error"
-                ),
-            }
+    # Check PostgreSQL if the job is no longer active in memory.
+    from app.core.database import SessionLocal
+    from app.core.models import KnowledgeBaseDocument
+    db = SessionLocal()
+    try:
+        # Since we don't store job_id in postgres, we might not be able to find it this way.
+        # However, if it's not in memory, it means either server restarted or it was removed.
+        pass
+    finally:
+        db.close()
 
     # Return None if the job is not found.
     return None
 
 
 # Delete a document and its indexed vectors.
-def delete_document_by_id(document_id):
+def delete_document_by_id(document_id, user_id=None):
 
     # Return if the document does not exist.
     if document_id not in documents:
         return None
 
+    # Verify ownership if user_id is provided.
+    if user_id and documents[document_id].get("user_id") and documents[document_id].get("user_id") != user_id:
+        return None
+
     # Remove document vectors from ChromaDB.
-    delete_documents(
-        document_id
-    )
+    if user_id:
+        delete_documents_for_user(document_id, user_id)
+    else:
+        # Fallback for old documents without user_id
+        from app.rag.chromadb_service import delete_documents
+        delete_documents(document_id)
 
     # Remove document metadata.
     del documents[

@@ -81,13 +81,14 @@ class LLMResponse(BaseModel):
         )
     )
 
-    confidence: float = Field(
-        default=0.0,
+    confidence: float | None = Field(
+        default=None,
         ge=0.0,
         le=1.0,
         description=(
-            "Heuristic confidence based on retrieval "
-            "relevance and citation coverage."
+            "Heuristic confidence based on retrieved evidence "
+            "quality and citation coverage. Null for responses "
+            "that do not use knowledge-base retrieval."
         )
     )
 

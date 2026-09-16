@@ -132,23 +132,3 @@ def get_token_subject(token: str) -> str | None:
         return None
 
     return subject
-
-
-def decode_token_for_refresh(token: str) -> str | None:
-    """
-    Decode a JWT token specifically for token refresh, ignoring expiration.
-    Validates signature and presence of subject claim.
-    """
-    try:
-        payload = jwt.decode(
-            token,
-            SECRET_KEY,
-            algorithms=[ALGORITHM],
-            options={"verify_exp": False},
-        )
-        subject = payload.get("sub")
-        if isinstance(subject, str) and subject:
-            return subject
-    except JWTError:
-        pass
-    return None

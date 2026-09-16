@@ -251,15 +251,8 @@ export default function ChatBubble({ message, onSelectSource }) {
                     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
                     <polyline points="14 2 14 8 20 8"/>
                   </svg>
-                  <span style={{ maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {(() => {
-                      const fname = source.source || source.metadata?.filename || 'Retrieved document';
-                      const cIdx = source.metadata?.chunk_index !== undefined 
-                        ? source.metadata.chunk_index 
-                        : (source.chunk_id && String(source.chunk_id).includes('_') ? String(source.chunk_id).split('_').pop() : null);
-                      const cLabel = (cIdx !== null && cIdx !== undefined && !isNaN(cIdx)) ? ` (Chunk ${Number(cIdx) + 1})` : '';
-                      return `${fname}${cLabel}`;
-                    })()}
+                  <span style={{ maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {source.source || source.metadata?.filename || 'Retrieved document'}
                   </span>
                   <span style={{ opacity: 0.6, fontSize: '0.7rem' }}>
                     {source.reference || `[${idx + 1}]`}

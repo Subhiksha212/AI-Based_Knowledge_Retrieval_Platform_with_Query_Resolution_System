@@ -313,6 +313,27 @@ export default function Sidebar({
           <span className="nav-label" style={{ marginLeft: '8px' }}>Knowledge Gaps</span>
         </button>
 
+        {user?.role === 'Admin' && (
+          <button
+            type="button"
+            onClick={() => setActiveTab('admin')}
+            className={`btn ${activeTab.startsWith('admin') ? 'btn-primary' : 'btn-secondary'}`}
+            style={{
+              justifyContent: 'flex-start',
+              width: '100%',
+              padding: '12px 16px',
+              border: activeTab.startsWith('admin') ? 'none' : '1px solid var(--border-color)',
+              background: activeTab.startsWith('admin') ? undefined : 'transparent',
+            }}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 12l2-2 4 4L19 4l2 2-12 12z" />
+              <path d="M5 20h14" />
+            </svg>
+            <span className="nav-label" style={{ marginLeft: '8px' }}>Admin Dashboard</span>
+          </button>
+        )}
+
         {/* ========================================================
             Logged-in User Profile
             ======================================================== */}

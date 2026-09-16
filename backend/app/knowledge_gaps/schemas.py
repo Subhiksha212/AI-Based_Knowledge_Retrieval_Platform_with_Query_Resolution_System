@@ -6,11 +6,19 @@ from pydantic import BaseModel, Field
 
 
 class KnowledgeGapCreate(BaseModel):
-    query_text: str = Field(..., min_length=1)
+    query_text: str = Field(
+        ...,
+        min_length=1,
+    )
+
     query_type: str | None = None
+
     reason: str
+
     confidence_score: float | None = Field(
-        default=None, ge=0.0, le=1.0
+        default=None,
+        ge=0.0,
+        le=1.0,
     )
 
 

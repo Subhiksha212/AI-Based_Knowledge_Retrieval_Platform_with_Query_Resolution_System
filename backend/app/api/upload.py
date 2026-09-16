@@ -20,6 +20,8 @@ from app.services.upload_service import (
     validate_upload_filename,
 )
 
+from app.core.database import get_db
+from sqlalchemy.orm import Session
 from app.dependencies.auth import get_current_user
 from app.core.models import User
 
@@ -33,6 +35,7 @@ async def upload_file(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
 
     # Validate uploaded filename.
@@ -64,6 +67,7 @@ async def upload_file(
 
         # Save the uploaded file and create a processing job.
         document_id, job_id, file_path = create_upload_job(
+            db,
             file,
             file_data,
             extension,
