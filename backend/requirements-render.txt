@@ -1,0 +1,34 @@
+# Document Processing (Lightweight)
+pypdf
+python-docx
+pandas
+pymupdf
+Pillow
+
+# LangChain & Agent Orchestration
+langchain==1.3.14
+langchain-text-splitters==1.1.2
+langchain-groq==1.1.3
+langgraph==1.2.10
+
+# Vector Storage & HTTP Requests
+chromadb==1.5.9
+requests
+
+# FastAPI Web Framework & Server
+fastapi==0.141.1
+uvicorn==0.52.1
+python-multipart
+
+# Environment Configuration
+python-dotenv
+
+# Database & ORM
+SQLAlchemy
+psycopg[binary]
+alembic
+
+# Security & Authentication
+bcrypt
+python-jose[cryptography]==3.5.0
+email-validator

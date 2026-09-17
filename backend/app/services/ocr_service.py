@@ -460,12 +460,22 @@ class OCRService:
     def run_ocr_on_image(self, image_bytes: bytes) -> dict:
         """
         Run PaddleOCR on an image and preserve spatial information.
-
-        Returns the legacy `text`/`confidence` fields plus `blocks`, where
-        every block contains OCR text, confidence, bounding-box coordinates,
-        and an inferred layout column. Existing callers can continue using
-        `text` without changes.
         """
+        remote_url = os.getenv("REMOTE_MODEL_URL") or os.getenv("NGROK_MODEL_URL")
+        if remote_url:
+            try:
+                endpoint = f"{remote_url.rstrip('/')}/api/models/ocr"
+                resp = requests.post(
+                    endpoint,
+                    files={"file": ("image.png", image_bytes, "image/png")},
+                    timeout=60,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                return data.get("result", {})
+            except Exception as e:
+                logger.error(f"[OCR Remote] Remote OCR call failed: {e}")
+
         try:
             pil_img = Image.open(io.BytesIO(image_bytes))
             if pil_img.mode != "RGB":

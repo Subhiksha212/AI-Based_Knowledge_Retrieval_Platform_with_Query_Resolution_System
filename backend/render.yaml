@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: querynest-backend
+    env: python
+    region: oregon
+    buildCommand: "pip install -r requirements-render.txt"
+    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: REMOTE_MODEL_URL
+        value: "https://cesspool-proxy-rind.ngrok-free.dev"
