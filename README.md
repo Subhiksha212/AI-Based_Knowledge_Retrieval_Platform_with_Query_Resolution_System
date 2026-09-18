@@ -1,4 +1,4 @@
-# AI-Based Knowledge Retrieval Platform with Query Resolution System
+# Development of AI-Based Knowledge Retrieval Platform with Query Resolution System
 
 An AI-powered Retrieval-Augmented Generation (RAG) platform that enables users to upload knowledge-base documents and query them using natural language. The ingestion pipeline supports native text extraction and OCR for scanned, handwritten, and image-based content. The project combines a multi-agent LangGraph workflow with persistent PostgreSQL conversation memory, clarification handling, browser-based voice input/output, response transparency, authenticated user workspaces, and direct LLM handling for general-knowledge/conversational questions. Milestone 4 adds query analytics, domain-agnostic common query-theme detection, knowledge-gap detection, authenticated user-specific knowledge bases, user-scoped ChromaDB retrieval, and dedicated Analytics and Knowledge Gap dashboards.
 
